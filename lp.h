@@ -36,6 +36,7 @@
 #include <vector>
 #include <ostream>
 #include <iomanip>
+#include <stdexcept>
 
 namespace lp {
 #ifdef LP_H_USE_FLOAT
@@ -49,6 +50,33 @@ namespace lp {
         /// Creates a m x n all-zeros matrix 
         Matrix(size_t m, size_t n) : n_rows(m), n_cols(n) {}
 
+        /// Returns the n x n identity matrix
+        static Matrix identity(size_t n) {
+            Matrix i(n, n);
+            for (size_t k = 0; k < n; ++k) {
+                i(k, k) = 1;
+            }
+            return i;
+        }
+
+        /// Returns the augmented matrix [a | b]
+        static Matrix augment(const Matrix& a, const Matrix& b) {
+            if (a.rows() != b.rows()) {
+                throw std::invalid_argument("augment: dimension mismatch");
+            }
+
+            Matrix aug(a.rows(), a.cols() + b.cols());
+            for (const auto e : a) {
+                aug(e.row, e.col) = e.value;
+            }
+
+            for (const auto e : b) {
+                aug(e.row, e.col + a.cols()) = e.value;
+            }
+
+            return aug;
+        }
+
         /// Returns the number of rows
         size_t rows() const { return n_rows; }
 
@@ -57,6 +85,87 @@ namespace lp {
 
         /// Returns the number of non-zero entries
         size_t non_zeros() const { return value.size(); }
+
+        bool square() const { return rows() == cols(); }
+
+        /// Returns a submatrix formed by a list of columns
+        Matrix submatrix(std::vector<size_t> subcols) const {
+            Matrix ret(n_rows, subcols.size());
+            for (size_t i = 0; i < value.size(); ++i) {
+                for (size_t j = 0; j < subcols.size(); ++j) {
+                    if (subcols[j] == col[i]) {
+                        ret(row[i], j) = value[i];
+                    }
+                }
+            }
+            return ret;
+        }
+
+        /// Swaps two rows.
+        void swap_rows(size_t r1, size_t r2) {
+            for (size_t i = 0; i < value.size(); ++i) {
+                if (row[i] == r1) { row[i] = r2; }
+                else if (row[i] == r2) { row[i] = r1; }
+            }
+        }
+
+        /// Scales a row by `s`
+        void scale_row(size_t r, Number s) {
+            for (size_t i = 0; i < value.size(); ++i) {
+                if (row[i] == r) { value[i] *= s; } 
+            }
+        }
+
+        /// Performs basic ERO R1 <- R1 + s*R2
+        void add_rows(size_t r1, size_t r2, Number s) {
+            for (size_t i = 0; i < value.size(); ++i) {
+                if (row[i] == r2) { 
+                    (*this)(r1, col[i]) += s * value[i];
+                } 
+            }
+        }
+
+        /// Computes the matrix's row reduced form
+        void rref() {
+            size_t lead = 0;
+            for (size_t r = 0; r < rows(); ++r) {
+                if (lead >= cols()) { return; }
+
+                // Find the pivot
+                size_t i = r;
+                while ((*this)(i, lead) == 0) {
+                    i += 1;
+                    if (i == rows()) {
+                        i = r;
+                        lead += 1;
+                        if (lead == cols()) { return; }
+                    }
+                }
+
+                swap_rows(i, r);
+                scale_row(r, 1/(*this)(r, lead));
+                for (size_t i = 0; i < rows(); ++i) {
+                    if (i == r) continue;
+                    add_rows(i, r, -(*this)(i, lead));
+                }
+
+                 lead += 1;
+            }
+        }
+
+        /// Computes a matrix's inverse. Warning: may produce incorrect results if the inverse does not exist
+        Matrix inverse() {
+            if (!square()) {
+                throw std::invalid_argument("inverse: matrix is not square");
+            }
+
+            std::vector<size_t> c;
+            for (size_t i = 0; i < cols(); ++i) { c.push_back(cols() + i); }
+
+            Matrix aug = Matrix::augment(*this, Matrix::identity(rows()));
+            aug.rref();
+            return aug.submatrix(c);
+        }
 
         struct Entry {
             size_t row, col;
@@ -96,6 +205,10 @@ namespace lp {
 
         /// Access the entry at (r,c)
         Number operator()(std::size_t r, std::size_t c) const {
+            if (r >= rows() || c >= cols()) {
+                throw std::invalid_argument("index out-of-bounds");
+            }
+            
             for (size_t i = 0; i < value.size(); ++i) {
                 if (row[i] == r && col[i] == c) {
                     return value[i];
@@ -106,6 +219,10 @@ namespace lp {
 
         /// Access a reference to entry at (r,c), inserts a 0 if entry does not exist
         Number& operator()(std::size_t r, std::size_t c) {
+            if (r >= rows() || c >= cols()) {
+                throw std::invalid_argument("index out-of-bounds");
+            }
+
             for (size_t i = 0; i < value.size(); ++i) {
                 if (row[i] == r && col[i] == c) {
                     return value[i];
@@ -118,6 +235,33 @@ namespace lp {
             value.push_back(0);
             return value.back();
         }
+
+        /// Matrix multiplication
+        Matrix operator*(const Matrix& rhs) const {
+            if (cols() != rhs.rows()) {
+                throw std::invalid_argument("multiply: dimension mismatch");
+            }
+
+            Matrix C(rows(), rhs.cols());            
+
+            // Group rhs by rows
+            std::vector<std::vector<size_t>> brow(rhs.rows());
+            for (size_t k = 0; k < rhs.value.size(); ++k) {
+                brow[rhs.row[k]].push_back(k);
+            }
+
+            for (size_t a = 0; a < value.size(); ++a) {
+                size_t r = row[a];
+                size_t k = col[a];
+
+                for (size_t b : brow[k]) {
+                    size_t j = rhs.col[b];
+                    C(r, j) += value[a] * rhs.value[b];
+                }
+            }
+
+            return C;
+        }
     private:
         std::size_t n_rows, n_cols;
         std::vector<Number> value;
@@ -126,11 +270,11 @@ namespace lp {
     };
 
     inline std::ostream& operator<<(std::ostream& os, const Matrix& m) {
-        size_t min_w = 6;
+        size_t min_w = 8;
 
         for (size_t r = 0; r < m.rows(); ++r) {
             for (size_t c = 0; c < m.cols(); ++c) {
-                os << std::setw(min_w) << m(r, c);
+                os << std::setw(min_w) << std::fixed << std::setprecision(2) << m(r, c);
             }
             os << std::endl;
         }

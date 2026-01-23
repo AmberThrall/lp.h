@@ -12,10 +12,18 @@ int main() {
     m(1,3) = 40;
     m(2,2) = 50;
     m(2,3) = 60;
-    m(2,4) = 70;
+    m(2,3) = 70;
+    m(3,3) = 10;
     m(3,5) = 80;
 
+    Matrix b = m.submatrix({0, 1, 2, 3});
+    Matrix b_inv = b.inverse();
+
+
     std::cout << m << std::endl;
+    std::cout << b << std::endl;
+    std::cout << b_inv << std::endl;
+    std::cout << b * b_inv << std::endl;
 
     return 0;
 }
