@@ -24,6 +24,7 @@ void print_state(RevisedSimplex::State& state) {
 
     std::cout << std::endl << "Iteration #" << g_iter_n << std::endl;
     std::cout << "-------------------" << std::endl;
+    std::cout << "Status: " << state.status << std::endl;
     print_vector(state.bv, "bv");
     print_vector(state.nbv, "nbv");
     print_vector(bfs, "bfs");

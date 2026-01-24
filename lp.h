@@ -32,7 +32,6 @@
 #define LP_H_VERSION_PATCH "0"
 #define LP_H_VERSION "v" LP_H_VERSION_MAJOR "." LP_H_VERSION_MINOR "." LP_H_VERSION_PATCH
 
-#include <algorithm>
 #include <cstdint>
 #include <vector>
 #include <ostream>
@@ -328,6 +327,16 @@ namespace lp {
 
     enum class SolutionStatus { kOptimal, kUnbounded, kInfeasible, kFeasible, kAborted };
 
+    inline std::ostream& operator<<(std::ostream& os, SolutionStatus s) {
+        switch (s) {
+            case lp::SolutionStatus::kOptimal: return os << "Optimal";
+            case lp::SolutionStatus::kUnbounded: return os << "Unbounded";
+            case lp::SolutionStatus::kInfeasible: return os << "Infeasible";
+            case lp::SolutionStatus::kFeasible: return os << "Feasible";
+            case lp::SolutionStatus::kAborted: return os << "Aborted";
+        }
+        return os << "Unknown";
+    }
 
     /// Performs revised simplex method to solve the LP:
     /// min c^Tx
@@ -460,12 +469,10 @@ namespace lp {
             size_t leaving_var = state.bv[min_ratio_winner];
 
             state.bv[min_ratio_winner] = enter_var;
-            std::sort(state.bv.begin(), state.bv.end());
 
             for (size_t i = 0; i < state.nbv.size(); ++i) {
                 if (state.nbv[i] == enter_var) { state.nbv[i] = leaving_var; break; }
             }
-            std::sort(state.nbv.begin(), state.nbv.end());
 
             // Compute the new Binv
             Matrix aug = Matrix::augment(state.Binv, dB * -1);
