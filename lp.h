@@ -32,6 +32,7 @@
 #define LP_H_VERSION_PATCH "0"
 #define LP_H_VERSION "v" LP_H_VERSION_MAJOR "." LP_H_VERSION_MINOR "." LP_H_VERSION_PATCH
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 #include <ostream>
@@ -89,12 +90,25 @@ namespace lp {
         bool square() const { return rows() == cols(); }
 
         /// Returns a submatrix formed by a list of columns
-        Matrix submatrix(std::vector<size_t> subcols) const {
+        Matrix submatrix_cols(std::vector<size_t> subcols) const {
             Matrix ret(n_rows, subcols.size());
             for (size_t i = 0; i < value.size(); ++i) {
                 for (size_t j = 0; j < subcols.size(); ++j) {
                     if (subcols[j] == col[i]) {
                         ret(row[i], j) = value[i];
+                    }
+                }
+            }
+            return ret;
+        }
+
+        /// Returns a submatrix formed by a list of rows
+        Matrix submatrix_rows(std::vector<size_t> subrows) const {
+            Matrix ret(subrows.size(), cols());
+            for (size_t i = 0; i < value.size(); ++i) {
+                for (size_t j = 0; j < subrows.size(); ++j) {
+                    if (subrows[j] == row[i]) {
+                        ret(j, col[i]) = value[i];
                     }
                 }
             }
@@ -164,7 +178,7 @@ namespace lp {
 
             Matrix aug = Matrix::augment(*this, Matrix::identity(rows()));
             aug.rref();
-            return aug.submatrix(c);
+            return aug.submatrix_cols(c);
         }
 
         struct Entry {
@@ -262,6 +276,36 @@ namespace lp {
 
             return C;
         }
+
+        void operator+=(const Matrix& rhs) {
+            if (cols() != rhs.cols() || rows() != rhs.rows()) {
+                throw std::invalid_argument("add: dimension mismatch");
+            }
+
+            // Group rhs by rows
+            for (const auto& e : rhs) {
+                (*this)(e.row, e.col) += e.value; 
+            }
+        }
+
+        void operator-=(const Matrix& rhs) {
+            if (cols() != rhs.cols() || rows() != rhs.rows()) {
+                throw std::invalid_argument("subtract: dimension mismatch");
+            }
+
+            // Group rhs by rows
+            for (const auto& e : rhs) {
+                (*this)(e.row, e.col) -= e.value; 
+            }
+        }
+
+        Matrix operator*(const Number& rhs) const {
+            Matrix C(*this);
+            for (size_t i = 0; i < C.value.size(); ++i) {
+                C.value[i] *= rhs;
+            }
+            return C;
+        }
     private:
         std::size_t n_rows, n_cols;
         std::vector<Number> value;
@@ -281,4 +325,166 @@ namespace lp {
 
         return os;
     }
+
+    enum class SolutionStatus { kOptimal, kUnbounded, kInfeasible, kFeasible, kAborted };
+
+
+    /// Performs revised simplex method to solve the LP:
+    /// min c^Tx
+    /// s.t. Ax <= b
+    ///       x >= 0
+    class RevisedSimplex {
+    public:
+        struct State {
+            Matrix& A;
+            Matrix& b;
+            Matrix& c;
+            Matrix& x;
+            std::vector<size_t> bv;
+            std::vector<size_t> nbv;
+            Matrix Binv;
+            SolutionStatus status;
+        };
+        
+        struct Solution {
+            std::vector<Number> x;
+            Number z;
+            SolutionStatus status;
+        };
+
+        typedef void (*HookFn)(State& state);
+
+        RevisedSimplex(Matrix& a, Matrix& b, Matrix& c) : A(a), b(b), c(c), hook(nullptr) {
+            A = Matrix::augment(a, Matrix::identity(a.rows()));
+            c = Matrix::augment(c, Matrix(1,a.rows()));
+        }
+
+        /// Sets a hook function that is called each iteration
+        void set_hook(HookFn fn) { hook = fn; }
+
+        Solution solve() {
+            Matrix c_orig(c);
+
+            // Always use the slack variables as starting basis variables
+            std::vector<size_t> bv;
+            std::vector<size_t> nbv;
+            for (size_t i = 0; i < A.cols(); ++i) {
+                if (i >= A.cols() - A.rows()) { bv.push_back(i); } 
+                else { nbv.push_back(i); }
+            }
+            Matrix Binv = Matrix::identity(bv.size());
+            Matrix x(A.cols(), 1);
+            for (const auto& e: b) { x(e.row + nbv.size(), e.col) = e.value; }
+
+            State state = { A, b, c, x, bv, nbv, Binv, SolutionStatus::kFeasible };
+
+            while (state.status == SolutionStatus::kFeasible) {
+                step(state);
+            }
+
+            // Create the solution
+            Number z = (c_orig * state.x)(0,0);
+            std::vector<Number> x_soln(A.cols());
+            for (const auto& e: state.x) { x_soln[e.row] = e.value; }
+
+            return Solution { x_soln, z, state.status };
+        }
+    private:
+        void step(State& state) {
+            // Check if optimal
+            Matrix cN = state.c.submatrix_cols(state.nbv);
+            Matrix cB = state.c.submatrix_cols(state.bv);
+            cN -= cB * state.Binv * state.A.submatrix_cols(state.nbv);
+
+            bool optimal = true;
+            for (const auto& e : cN) { 
+                if (e.value < 0) { optimal = false; break; }
+            }
+            if (optimal) { state.status = SolutionStatus::kOptimal; }
+
+            // Call the hook
+            if (hook != nullptr) {
+                hook(state);
+            }
+            if (state.status != SolutionStatus::kFeasible) { return; }
+                        
+            // Determine the entering variable
+            size_t enter_var = 1;
+            Number best = 0;
+            for (const auto& e : cN) {
+                if (e.value < best) {
+                    enter_var = state.nbv[e.col];
+                    best = e.value;
+                }
+            }
+ 
+            // Check if LP is unbounded
+            Matrix dB = state.Binv * state.A.submatrix_cols({enter_var}) * -1;
+            bool unbounded = true;
+            for (const auto& e : dB) {
+                if (e.value < 0) { unbounded = false; break; }
+            }
+
+            if (unbounded) {
+                state.status = SolutionStatus::kUnbounded;
+                return;
+            }
+
+            // Perform minimum ratio test for leaving variable
+            Matrix xB = state.x.submatrix_rows(state.bv); 
+            
+            Number min_ratio = 0;
+            size_t min_ratio_winner = 0;
+            for (size_t i = 0; i < state.bv.size(); ++i) {
+                Number x = xB(i, 0);
+                Number d = dB(i, 0);
+                if (x > 0) {
+                    Number ratio = -x / d;
+                    if (ratio < min_ratio || min_ratio == 0) {
+                        min_ratio = ratio;
+                        min_ratio_winner = i;
+                    }
+                }
+            }
+
+            if (min_ratio == 0) {
+                state.status = SolutionStatus::kUnbounded;
+                return;
+            }       
+
+            Matrix d(state.x.rows(), 1);
+            for (const auto& e: dB) { d(state.bv[e.row], 0) = e.value; }
+            d(enter_var, 0) = 1;
+            state.x += d * min_ratio;
+            
+            size_t leaving_var = state.bv[min_ratio_winner];
+
+            state.bv[min_ratio_winner] = enter_var;
+            std::sort(state.bv.begin(), state.bv.end());
+
+            for (size_t i = 0; i < state.nbv.size(); ++i) {
+                if (state.nbv[i] == enter_var) { state.nbv[i] = leaving_var; break; }
+            }
+            std::sort(state.nbv.begin(), state.nbv.end());
+
+            // Compute the new Binv
+            Matrix aug = Matrix::augment(state.Binv, dB * -1);
+
+            // We want last column of aug to be e_j, where j = enter_var
+            aug.scale_row(enter_var, -1/dB(enter_var, 0));
+            for (const auto& e : dB) {
+                if (e.row == enter_var) { continue; }
+                aug.add_rows(e.row, enter_var, e.value);
+            }
+
+            std::vector<size_t> subcols;
+            for (size_t i = 0; i < state.Binv.cols(); ++i) { subcols.push_back(i); }
+            state.Binv = aug.submatrix_cols(subcols);
+        }
+
+        Matrix& A;
+        Matrix& b;
+        Matrix& c;
+        HookFn hook;
+    };
 }
