@@ -32,11 +32,13 @@
 #define LP_H_VERSION_PATCH "0"
 #define LP_H_VERSION "v" LP_H_VERSION_MAJOR "." LP_H_VERSION_MINOR "." LP_H_VERSION_PATCH
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 #include <ostream>
 #include <iomanip>
 #include <stdexcept>
+#include <limits>
 
 namespace lp {
 #ifdef LP_H_USE_FLOAT
@@ -44,7 +46,9 @@ namespace lp {
 #else
     using Number = double;
 #endif
+    constexpr Number Inf = std::numeric_limits<Number>::infinity();
 
+    /// Simple COO-format matrix class used during simplex method
     class Matrix {
     public:
         /// Creates a m x n all-zeros matrix 
@@ -83,9 +87,6 @@ namespace lp {
         /// Returns the number of columns
         size_t cols() const { return n_cols; }
 
-        /// Returns the number of non-zero entries
-        size_t non_zeros() const { return value.size(); }
-
         bool square() const { return rows() == cols(); }
 
         /// Returns a submatrix formed by a list of columns
@@ -114,14 +115,6 @@ namespace lp {
             return ret;
         }
 
-        /// Swaps two rows.
-        void swap_rows(size_t r1, size_t r2) {
-            for (size_t i = 0; i < value.size(); ++i) {
-                if (row[i] == r1) { row[i] = r2; }
-                else if (row[i] == r2) { row[i] = r1; }
-            }
-        }
-
         /// Scales a row by `s`
         void scale_row(size_t r, Number s) {
             for (size_t i = 0; i < value.size(); ++i) {
@@ -138,48 +131,6 @@ namespace lp {
             }
         }
 
-        /// Computes the matrix's row reduced form
-        void rref() {
-            size_t lead = 0;
-            for (size_t r = 0; r < rows(); ++r) {
-                if (lead >= cols()) { return; }
-
-                // Find the pivot
-                size_t i = r;
-                while ((*this)(i, lead) == 0) {
-                    i += 1;
-                    if (i == rows()) {
-                        i = r;
-                        lead += 1;
-                        if (lead == cols()) { return; }
-                    }
-                }
-
-                swap_rows(i, r);
-                scale_row(r, 1/(*this)(r, lead));
-                for (size_t i = 0; i < rows(); ++i) {
-                    if (i == r) continue;
-                    add_rows(i, r, -(*this)(i, lead));
-                }
-
-                 lead += 1;
-            }
-        }
-
-        /// Computes a matrix's inverse. Warning: may produce incorrect results if the inverse does not exist
-        Matrix inverse() {
-            if (!square()) {
-                throw std::invalid_argument("inverse: matrix is not square");
-            }
-
-            std::vector<size_t> c;
-            for (size_t i = 0; i < cols(); ++i) { c.push_back(cols() + i); }
-
-            Matrix aug = Matrix::augment(*this, Matrix::identity(rows()));
-            aug.rref();
-            return aug.submatrix_cols(c);
-        }
-
         struct Entry {
             size_t row, col;
             Number& value;
@@ -192,7 +143,7 @@ namespace lp {
         class iterator {
         public:
             iterator(Matrix* m, size_t idx) : m(m), idx(idx) {}
-            Entry operator*() const { return { m->row[idx], m->col[idx], m->value[idx] }; }
+            Entry operator*() const { return {  m->row[idx], m->col[idx], m->value[idx] }; }
             iterator& operator++() { ++idx; return *this; }
             bool operator!=(const iterator& other) const { return idx != other.idx; }
         private:
@@ -317,7 +268,7 @@ namespace lp {
 
         for (size_t r = 0; r < m.rows(); ++r) {
             for (size_t c = 0; c < m.cols(); ++c) {
-                os << std::setw(min_w) << std::fixed << std::setprecision(2) << m(r, c);
+                os << std::setw(min_w) << m(r, c);
             }
             os << std::endl;
         }
@@ -494,4 +445,279 @@ namespace lp {
         Matrix& c;
         HookFn hook;
     };
+
+    struct Expression;
+
+    struct Variable {
+        size_t id;
+        Number min;
+        Number max;
+        std::string name;    
+    };
+    
+    inline std::ostream& operator<<(std::ostream& os, const Variable& v) {
+        os << v.name;
+        return os;
+    }
+
+    struct Expression {
+        std::vector<std::pair<Number, Variable*>> terms;
+
+        Expression() {}
+
+        Expression& operator+=(Expression rhs) {
+            for (auto& rhs_term : rhs.terms) {
+                auto it = std::find_if(terms.begin(), terms.end(), [&](std::pair<Number, Variable*> term) {
+                    return term.second->id == rhs_term.second->id;
+                });
+                if (it != terms.end()) {
+                    it->first += rhs_term.first;
+                }
+                else {
+                    terms.push_back(rhs_term);         
+                }
+            }
+
+            return *this;
+        }
+        
+        Expression& operator-=(Expression rhs) {
+            for (auto& rhs_term : rhs.terms) {
+                auto it = std::find_if(terms.begin(), terms.end(), [&](std::pair<Number, Variable*> term) {
+                    return term.second->id == rhs_term.second->id;
+                });
+                if (it != terms.end()) {
+                    it->first -= rhs_term.first;
+                }
+                else {
+                    terms.push_back(std::make_pair(-rhs_term.first, rhs_term.second));         
+                }
+            }
+
+            return *this;
+        }
+
+        Expression& operator*=(Number rhs) {
+            if (rhs == 0) { 
+                terms.clear();
+            }
+            
+            for (auto& term: terms) {
+                term.first *= rhs;
+            }
+
+            return *this;
+        }
+
+        Expression& operator+=(Variable& rhs) {
+            auto it = std::find_if(terms.begin(), terms.end(), [&](std::pair<Number, Variable*> term) {
+                return term.second->id == rhs.id;
+            });
+            if (it != terms.end()) {
+                it->first += 1;
+            }
+            else {
+                terms.push_back(std::make_pair(1, &rhs));         
+            }
+
+            return *this;
+        }
+
+        Expression& operator-=(Variable& rhs) {
+            auto it = std::find_if(terms.begin(), terms.end(), [&](std::pair<Number, Variable*> term) {
+                return term.second->id == rhs.id;
+            });
+            if (it != terms.end()) {
+                it->first -= 1;
+            }
+            else {
+                terms.push_back(std::make_pair(-1, &rhs));         
+            }
+
+            return *this;
+        }
+        
+        Expression operator-() { return (*this) * Number(-1); }
+        friend Expression operator+(Variable& lhs, Expression& rhs) { return rhs + lhs; }
+        friend Expression operator+(Expression lhs, Variable& rhs) {
+            lhs += rhs;
+            return lhs;
+        }
+        friend Expression operator-(Variable& lhs, Expression& rhs) { return rhs - lhs; }
+        friend Expression operator-(Expression lhs, Variable& rhs) {
+            lhs -= rhs;
+            return lhs;
+        }
+        friend Expression operator+(Expression lhs, Expression rhs) {
+            lhs += rhs;
+            return lhs;
+        }
+        friend Expression operator-(Expression lhs, Expression rhs) {
+            lhs -= rhs;
+            return lhs;
+        }
+        friend Expression operator*(Number lhs, Expression rhs) {
+            rhs *= lhs;
+            return rhs;
+        }
+        friend Expression operator*(Expression lhs, Number rhs) { return rhs * lhs; }
+    };
+
+    inline Expression operator*(Variable& lhs, Number rhs) {
+        Expression e; 
+        e.terms.push_back(std::make_pair(rhs, &lhs));
+        return e;
+    }
+    inline Expression operator*(Number lhs, Variable& rhs) { return rhs * lhs;} 
+    inline Expression operator-(Variable& v) { return v * Number(-1); }
+
+    inline std::ostream& operator<<(std::ostream& os, const Expression& e) {
+        bool first_term = true;
+
+        if (e.terms.size() == 0) { os << "0"; }
+
+        for (size_t i = 0; i < e.terms.size(); ++i) {
+            Number c = e.terms[i].first;
+            if (c == 0) { continue; }
+
+            if (!first_term) {
+                if (c > 0) { os << " + "; }        
+                if (c < 0) { os << " - "; }        
+            }
+            else if (c < 0) { os << "-"; }
+            if (std::abs(c) != 1) { os << std::abs(c) << "*"; }
+            os << e.terms[i].second->name;
+            first_term = false;
+        }
+        return os;
+    }
+
+    enum class ConstraintType { Eq, LEq, GEq };
+
+    struct Constraint {
+        Expression lhs;
+        Number rhs;
+        ConstraintType type;
+    };
+
+    inline Constraint operator==(Expression lhs, Number rhs) {
+        Constraint c { std::move(lhs), rhs, ConstraintType::Eq };
+        return c;
+    }
+    inline Constraint operator<=(Expression lhs, Number rhs) {
+        Constraint c { std::move(lhs), rhs, ConstraintType::LEq };
+        return c;
+    }
+    inline Constraint operator>=(Expression lhs, Number rhs) {
+        Constraint c { std::move(lhs), rhs, ConstraintType::GEq };
+        return c;
+    }
+
+    inline std::ostream& operator<<(std::ostream& os, const Constraint& c) {
+        os << c.lhs << " ";
+        switch (c.type) {
+            case ConstraintType::Eq: os << "="; break;
+            case ConstraintType::LEq: os << "<="; break;
+            case ConstraintType::GEq: os << ">="; break;
+        }
+        os << " " << c.rhs;
+        return os;
+    }
+
+    enum class ProblemType { Min, Max };
+
+    struct Solution {
+        Number objective;
+        SolutionStatus status;
+        std::vector<Number> values;
+    
+        Number operator[](const Variable& v) {
+            if (v.id >= values.size()) { 
+                throw std::runtime_error("Variable not part of problem.");
+            }
+            return values[v.id];
+        }
+    };
+
+    class Problem {
+    public:
+        Problem(ProblemType type) : type(type) {}
+
+        static Problem minimize() { return Problem(ProblemType::Min); }
+        static Problem maximize() { return Problem(ProblemType::Max); }
+
+        Variable add_var(Number min, Number max) {
+            size_t id = variables.size();
+            return add_var(min, max, "x" + std::to_string(id));
+        }
+
+        Variable add_var(Number min, Number max, std::string name) {
+            size_t id = variables.size();
+            variables.push_back(Variable { id, min, max, name });
+            return variables[id];
+        }
+
+        void objective(Expression e) {
+            objective_ = std::move(e);
+        }
+
+        void constraint(Constraint c) {
+            constraints.push_back(std::move(c));
+        }
+
+        Solution solve() {
+            // Convert to standard form
+            
+            // Build the matrix form
+            Matrix A(constraints.size(), variables.size());
+            Matrix b(constraints.size(), 1);
+            for (size_t i = 0; i < constraints.size(); ++i) {
+                for (const auto& v : constraints[i].lhs.terms) {
+                    if (v.first == 0) { continue; }
+                    A(i, v.second->id) = v.first;
+                }
+
+                b(i,0) = constraints[i].rhs;
+            }
+
+            Matrix c(1, variables.size());
+            for (const auto& v: objective_.terms) {
+                if (v.first == 0) { continue; }
+                c(0, v.second->id) = (type == ProblemType::Max) ? -v.first :  v.first;
+            }
+
+            // Solve
+            RevisedSimplex simplex(A, b, c);
+            RevisedSimplex::Solution s = simplex.solve();
+
+            Solution solution;
+            solution.status = s.status;
+            for (size_t i = 0; i < variables.size(); ++i) {
+                solution.values.push_back(s.x[i]);
+            }
+            solution.objective = (type == ProblemType::Max) ? -s.z : s.z;
+            return solution;
+        }
+
+        friend std::ostream& operator<<(std::ostream& os, const Problem& p) {
+            switch (p.type) {
+                case ProblemType::Min: os << "min"; break;
+                case ProblemType::Max: os << "max"; break;
+            }
+            os << "  " << p.objective_;
+            os << std::endl << "s.t. ";
+            for (size_t i = 0; i < p.constraints.size(); ++i) {
+                if (i > 0) { os << "     "; }
+                os << p.constraints[i] << std::endl;
+            }
+
+            return os;
+        }
+    private:
+        ProblemType type;
+        Expression objective_;
+        std::vector<Variable> variables;
+        std::vector<Constraint> constraints;
+    };
 }
+
