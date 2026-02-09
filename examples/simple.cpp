@@ -1,5 +1,6 @@
 #include <iostream>
 
+#define LP_H_DEBUG
 #include "../lp.h"
 using namespace lp;
 
@@ -30,9 +31,9 @@ int main() {
     Problem problem2 = Problem::maximize();
     x = problem2.add_var(0, lp::Inf, "x");
     y = problem2.add_var(0, lp::Inf, "y");
-    problem2.objective(40*x + 30*y);
-    problem2.constraint(x + y <= 12);
-    problem2.constraint(2*x + y <= 16);
+    problem2.objective(40*x - 30*y);
+    problem2.constraint(x - y <= 12);
+    problem2.constraint(2*x - y <= 16);
 
     std::cout << "Problem: " << std::endl << problem2;
 
@@ -48,36 +49,4 @@ int main() {
         std::cout << "z* = " << soln.objective << std::endl;
     }
     return 0;
-
-    // min -x - y
-    // s.t. 2x + y + s1 = 4
-    //      3x + 5y + s2 = 15
-    /*Matrix A(2, 4);
-    A(0,0) = 2;
-    A(0,1) = 1;
-    A(0,2) = 1;
-    A(1,0) = 3;
-    A(1,1) = 5;
-    A(1,3) = 1;
-
-    Matrix b(2, 1);
-    b(0,0) = 4;
-    b(1,0) = 15;
-
-    Matrix c(1, 4);
-    c(0,0) = -1;
-    c(0,1) = -1;
-
-    std::cout << "A =" << std::endl << A;
-    std::cout << "b =" << std::endl << b;
-    std::cout << "c =" << std::endl << c;
-
-    Solver solver(A, b, c);
-    Solver::Solution soln = solver.solve();
-    std::cout << "soln = [";
-    for (size_t i = 0; i < soln.x.size(); ++i) {
-        if (i > 0) { std::cout << ","; }
-        std::cout << soln.x[i];
-    }
-    std::cout << "], z* = " << soln.z << std::endl;*/
 }

@@ -385,6 +385,7 @@ namespace lp {
         Solver(Matrix& a, Matrix& b, Matrix& c) : A(a), b(b), c(c), cP(c), x(Matrix(a.cols(), 1)) {}
 
         Solution solve() {
+            cP = c;
             status = SolutionStatus::kFeasible;
             start();
             iter_num = 0;
@@ -407,16 +408,46 @@ namespace lp {
         }
 
         void start() {
+#ifdef LP_H_DEBUG
+            std::cout << "c = " << std::endl << c;
+            std::cout << "A = " << std::endl << A;
+            std::cout << "b = " << std::endl << b;
+#endif
+
             // Determine the initial bfs
             for (size_t i = 0; i < A.cols(); ++i) {
-                if (i < A.rows()) { bv.push_back(i); }
-                else { nbv.push_back(i); }
+                size_t num_zeros = 0;
+                for (size_t j = 0; j < A.rows(); ++j) {
+                    if (std::abs(A(j,i)) < Eps) { 
+                        num_zeros += 1;
+                    }
+                }
+
+                if (num_zeros == A.rows()-1) {
+                    bv.push_back(i);
+                    if (bv.size() >= A.rows()) { break; }
+                }
             }
 
+            // TODO: Handle this case.
+            if (bv.size() != A.rows()) {
+                throw std::invalid_argument("failed to find initial bfs.");
+            }
+
+            for (size_t i = 0; i < A.cols(); ++i) {
+                if (std::find(bv.begin(), bv.end(), i) == bv.end()) {
+                    nbv.push_back(i);
+                }
+            }
+
+            // Compute basis matrix and invert
             Matrix basis = A.submatrix_cols(bv);
+#ifdef LP_H_DEBUG
+            std::cout << "basis = " << std::endl << basis;
+#endif
             Binv = basis.inverse();
 
-            cP = c;
+            // Determine initial bfs
             Matrix xB = Binv * b;
             for (const auto & e : xB) {
                 x(bv[e.row],0) = e.value;
@@ -766,9 +797,10 @@ namespace lp {
         class ExtraVar {
         public:
             ExtraVar(size_t id) : id(id) {}
-            virtual void apply_matrix(Matrix&) {};
-            virtual void apply_obj(Matrix&) {};
-            virtual void apply_soln(Solver::Solution&) {};
+            virtual ~ExtraVar() {}
+            virtual void apply_matrix(Matrix&) {}
+            virtual void apply_obj(Matrix&) {}
+            virtual void apply_soln(Solver::Solution&) {}
         protected:
             size_t id;
         };
@@ -813,10 +845,10 @@ namespace lp {
 
         Solution solve() {
             // Convert to standard form
-            std::vector<transformations::ExtraVar> extra_vars;
+            std::vector<transformations::ExtraVar*> extra_vars;
             for (size_t r = 0; r < constraints.size(); ++r) {
                 if (constraints[r].type != ConstraintType::Eq) {
-                    extra_vars.push_back(transformations::SlackVar(variables.size() + extra_vars.size(), r, constraints[r].type));
+                    extra_vars.push_back(new transformations::SlackVar(variables.size() + extra_vars.size(), r, constraints[r].type));
                 }
             }
             
@@ -840,8 +872,8 @@ namespace lp {
             }
 
             for (auto& ev : extra_vars) {
-                ev.apply_matrix(A);
-                ev.apply_obj(c);
+                ev->apply_matrix(A);
+                ev->apply_obj(c);
             }
 
             // Solve
@@ -849,7 +881,8 @@ namespace lp {
             Solver::Solution s = simplex.solve();
 
             for (auto& ev : extra_vars) {
-                ev.apply_soln(s);
+                ev->apply_soln(s);
+                delete ev;
             }
 
             Solution solution;
