@@ -872,6 +872,15 @@ namespace lp {
                 if (i > 0) { os << "     "; }
                 os << p.constraints[i] << std::endl;
             }
+            for (size_t i = 0; i < p.variables.size(); ++i) {
+                if (p.variables[i].min == -Inf && p.variables[i].max == Inf) { continue; }
+                
+                os << "     "; 
+                if (p.variables[i].min == -Inf) { os << p.variables[i] << " <= " << p.variables[i].max; }
+                else if (p.variables[i].max == Inf) { os << p.variables[i] << " >= " << p.variables[i].min; }
+                else { os << p.variables[i].min << " <= " << p.variables[i] << " <= " << p.variables[i].max; }
+                os << std::endl;
+            }
 
             return os;
         }
