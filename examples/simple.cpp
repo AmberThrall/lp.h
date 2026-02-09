@@ -5,8 +5,8 @@ using namespace lp;
 
 int main() {
     Problem problem = Problem::minimize();
-    Variable x = problem.add_var(0, lp::Inf, "x");
-    Variable y = problem.add_var(0, lp::Inf, "y");
+    Variable x = problem.add_var(0, lp::Infinity, "x");
+    Variable y = problem.add_var(0, lp::Infinity, "y");
     problem.objective(-x - y);
     problem.constraint(2*x + y <= 4);
     problem.constraint(3*x + 5*y <= 15);
@@ -28,8 +28,8 @@ int main() {
     std::cout << std::endl;
 
     Problem problem2 = Problem::maximize();
-    x = problem2.add_var(0, lp::Inf, "x");
-    y = problem2.add_var(-lp::Inf, 0, "y");
+    x = problem2.add_var(0, lp::Infinity, "x");
+    y = problem2.add_var(-lp::Infinity, 0, "y");
     problem2.objective(40*x - 30*y);
     problem2.constraint(x - y <= 12);
     problem2.constraint(2*x - y <= 16);

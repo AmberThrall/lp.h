@@ -49,7 +49,7 @@ namespace lp {
 #else
     using Number = double;
 #endif
-    constexpr Number Inf = std::numeric_limits<Number>::infinity();
+    constexpr Number Infinity = std::numeric_limits<Number>::infinity();
     constexpr Number Eps = 1e-9;
 
     /// Simple COO-format matrix class used during simplex method
@@ -944,11 +944,11 @@ namespace lp {
                 os << p.constraints[i] << std::endl;
             }
             for (size_t i = 0; i < p.variables.size(); ++i) {
-                if (p.variables[i].min == -Inf && p.variables[i].max == Inf) { continue; }
+                if (p.variables[i].min == -Infinity && p.variables[i].max == Infinity) { continue; }
                 
                 os << "     "; 
-                if (p.variables[i].min == -Inf) { os << p.variables[i] << " <= " << p.variables[i].max; }
-                else if (p.variables[i].max == Inf) { os << p.variables[i] << " >= " << p.variables[i].min; }
+                if (p.variables[i].min == -Infinity) { os << p.variables[i] << " <= " << p.variables[i].max; }
+                else if (p.variables[i].max == Infinity) { os << p.variables[i] << " >= " << p.variables[i].min; }
                 else { os << p.variables[i].min << " <= " << p.variables[i] << " <= " << p.variables[i].max; }
                 os << std::endl;
             }
