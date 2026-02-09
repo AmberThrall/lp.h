@@ -32,6 +32,9 @@
 #define LP_H_VERSION_PATCH "0"
 #define LP_H_VERSION "v" LP_H_VERSION_MAJOR "." LP_H_VERSION_MINOR "." LP_H_VERSION_PATCH
 
+#ifdef LP_H_DEBUG
+#include <iostream>
+#endif
 #include <algorithm>
 #include <cstdint>
 #include <vector>
@@ -47,10 +50,14 @@ namespace lp {
     using Number = double;
 #endif
     constexpr Number Inf = std::numeric_limits<Number>::infinity();
+    constexpr Number Eps = 1e-9;
 
     /// Simple COO-format matrix class used during simplex method
     class Matrix {
     public:
+        /// Creates the 0 x 0 matrix
+        Matrix() : n_rows(0), n_cols(0) {}
+
         /// Creates a m x n all-zeros matrix 
         Matrix(size_t m, size_t n) : n_rows(m), n_cols(n) {}
 
@@ -113,6 +120,75 @@ namespace lp {
                 }
             }
             return ret;
+        }
+
+        void rref() {
+            size_t lead = 0; 
+            for (size_t r = 0; r < rows(); ++r) {
+                if (lead >= cols()) { break; }
+
+                // Find pivot
+                size_t i = r;
+                while (std::abs((*this)(i, lead)) < Eps) {
+                    i += 1;
+                    if (i == rows()) {
+                        i = r;
+                        lead += 1;
+                        if (lead == cols()) { return; }
+                    }
+                }
+
+                // Swap rows i and r
+                swap_rows(i, r);
+
+                // R_r <- R_r / pivot
+                scale_row(r, 1 / (*this)(r, lead));
+
+                // For each row i!=r, R_i <- R_i - R_r * m(i,lead)
+                for (size_t i = 0; i < rows(); ++i) {
+                    if (i == r) { continue; }
+                    add_rows(i, r, -(*this)(i, lead));
+                }
+
+                lead += 1;
+            }
+        }
+
+        Matrix inverse() const {
+            if (!square()) {
+                throw std::runtime_error("cannot take inverse of non-square matrix.");
+            }
+
+            Matrix aug = Matrix::augment((*this), Matrix::identity(rows()));
+            aug.rref();
+
+            // Check that matrix was invertible.
+            for (size_t r = 0; r < rows(); ++r) {
+                for (size_t c = 0; c < cols(); ++c) {
+                    bool pass = true;
+                    if (r == c && std::abs(aug(r,c) - 1) > Eps) { pass = false; }
+                    if (r != c && std::abs(aug(r,c)) > Eps) { pass = false; }
+
+                    if (!pass) {
+                        throw std::runtime_error("cannot take inverse of a singular matrix.");
+                    }
+                }
+            }
+
+            // Get the inverse from aug
+            std::vector<size_t> subcols;
+            for (size_t i = 0; i < rows(); ++i) {
+                subcols.push_back(i + rows());
+            }
+            return aug.submatrix_cols(subcols); 
+        }
+
+        /// Swaps rows r1 and r2
+        void swap_rows(size_t r1, size_t r2) {
+            for (size_t i = 0; i < value.size(); ++i) {
+                if (row[i] == r1) { row[i] = r2; }
+                else if (row[i] == r2) { row[i] = r1; }
+            }
         }
 
         /// Scales a row by `s`
@@ -263,8 +339,12 @@ namespace lp {
         std::vector<size_t> row;
     };
 
+    inline Matrix operator*(const Number& lhs, const Matrix& rhs) {
+        return rhs * lhs;
+    }
+
     inline std::ostream& operator<<(std::ostream& os, const Matrix& m) {
-        size_t min_w = 8;
+        size_t min_w = 12;
 
         for (size_t r = 0; r < m.rows(); ++r) {
             for (size_t c = 0; c < m.cols(); ++c) {
@@ -277,6 +357,7 @@ namespace lp {
     }
 
     enum class SolutionStatus { kOptimal, kUnbounded, kInfeasible, kFeasible, kAborted };
+    enum class ProblemType { Min, Max };
 
     inline std::ostream& operator<<(std::ostream& os, SolutionStatus s) {
         switch (s) {
@@ -290,163 +371,194 @@ namespace lp {
     }
 
     /// Performs revised simplex method to solve the LP:
-    /// min c^Tx
-    /// s.t. Ax <= b
+    /// min z = c^Tx
+    /// s.t. Ax == b
     ///       x >= 0
-    class RevisedSimplex {
+    class Solver {
     public:
-        struct State {
-            Matrix& A;
-            Matrix& b;
-            Matrix& c;
-            Matrix& x;
-            std::vector<size_t> bv;
-            std::vector<size_t> nbv;
-            Matrix Binv;
-            SolutionStatus status;
-        };
-        
         struct Solution {
             std::vector<Number> x;
             Number z;
             SolutionStatus status;
         };
 
-        typedef void (*HookFn)(State& state);
-
-        RevisedSimplex(Matrix& a, Matrix& b, Matrix& c) : A(a), b(b), c(c), hook(nullptr) {
-            A = Matrix::augment(a, Matrix::identity(a.rows()));
-            c = Matrix::augment(c, Matrix(1,a.rows()));
-        }
-
-        /// Sets a hook function that is called each iteration
-        void set_hook(HookFn fn) { hook = fn; }
+        Solver(Matrix& a, Matrix& b, Matrix& c) : A(a), b(b), c(c), cP(c), x(Matrix(a.cols(), 1)) {}
 
         Solution solve() {
-            Matrix c_orig(c);
+            status = SolutionStatus::kFeasible;
+            start();
+            iter_num = 0;
 
-            // Always use the slack variables as starting basis variables
-            std::vector<size_t> bv;
-            std::vector<size_t> nbv;
-            for (size_t i = 0; i < A.cols(); ++i) {
-                if (i >= A.cols() - A.rows()) { bv.push_back(i); } 
-                else { nbv.push_back(i); }
-            }
-            Matrix Binv = Matrix::identity(bv.size());
-            Matrix x(A.cols(), 1);
-            for (const auto& e: b) { x(e.row + nbv.size(), e.col) = e.value; }
-
-            State state = { A, b, c, x, bv, nbv, Binv, SolutionStatus::kFeasible };
-
-            while (state.status == SolutionStatus::kFeasible) {
-                step(state);
+            while (status == SolutionStatus::kFeasible) {
+                iter_num += 1;
+                step();
             }
 
             // Create the solution
-            Number z = (c_orig * state.x)(0,0);
+            Number z = obj_value();
             std::vector<Number> x_soln(A.cols());
-            for (const auto& e: state.x) { x_soln[e.row] = e.value; }
+            for (const auto& e: x) { x_soln[e.row] = e.value; }
 
-            return Solution { x_soln, z, state.status };
+            return Solution { x_soln, z, status };
         }
-    private:
-        void step(State& state) {
+    protected:
+        Number obj_value() const {
+            return (c * x)(0,0);
+        }
+
+        void start() {
+            // Determine the initial bfs
+            for (size_t i = 0; i < A.cols(); ++i) {
+                if (i < A.rows()) { bv.push_back(i); }
+                else { nbv.push_back(i); }
+            }
+
+            Matrix basis = A.submatrix_cols(bv);
+            Binv = basis.inverse();
+
+            cP = c;
+            Matrix xB = Binv * b;
+            for (const auto & e : xB) {
+                x(bv[e.row],0) = e.value;
+            }
+        }
+
+        void step() {
+#ifdef LP_H_DEBUG
+            // Print the current status
+            std::cout << std::endl << "Iteration #" << iter_num << ":" << std::endl;
+            std::cout << "----------------------" << std::endl;
+            std::cout << "bv = [";
+            for (size_t i = 0; i < bv.size(); ++i) { 
+                if (i > 0) { std::cout << ","; }
+                std::cout << bv[i];
+            }
+            std::cout << "]" << std::endl << "nbv = [";
+            for (size_t i = 0; i < nbv.size(); ++i) { 
+                if (i > 0) { std::cout << ","; }
+                std::cout << nbv[i];
+            }
+            std::cout << "]" << std::endl << "x = <";
+            for (size_t i = 0; i < x.rows(); ++i) { 
+                if (i > 0) { std::cout << ","; }
+                std::cout << x(i,0);
+            }
+            std::cout << ">" << std::endl << "c = <";
+            for (size_t i = 0; i < cP.cols(); ++i) { 
+                if (i > 0) { std::cout << ","; }
+                std::cout << cP(0,i);
+            }
+            std::cout << ">" << std::endl << "Binv = " << std::endl << Binv;
+#endif
+
+            // Find the new objective vector
+            Matrix cB = cP.submatrix_cols(bv);
+
+            cP -= cB * Binv * A;
+            Matrix cN = cP.submatrix_cols(nbv);
+
+#ifdef LP_H_DEBUG
+            std::cout << std::endl << "c' = " << cP;
+#endif
+
             // Check if optimal
-            Matrix cN = state.c.submatrix_cols(state.nbv);
-            Matrix cB = state.c.submatrix_cols(state.bv);
-            cN -= cB * state.Binv * state.A.submatrix_cols(state.nbv);
-
-            bool optimal = true;
+            size_t entering_var = 0;
+            Number most_negative = 0;
             for (const auto& e : cN) { 
-                if (e.value < 0) { optimal = false; break; }
-            }
-            if (optimal) { state.status = SolutionStatus::kOptimal; }
-
-            // Call the hook
-            if (hook != nullptr) {
-                hook(state);
-            }
-            if (state.status != SolutionStatus::kFeasible) { return; }
-                        
-            // Determine the entering variable
-            size_t enter_var = 1;
-            Number best = 0;
-            for (const auto& e : cN) {
-                if (e.value < best) {
-                    enter_var = state.nbv[e.col];
-                    best = e.value;
-                }
-            }
- 
-            // Check if LP is unbounded
-            Matrix dB = state.Binv * state.A.submatrix_cols({enter_var}) * -1;
-            bool unbounded = true;
-            for (const auto& e : dB) {
-                if (e.value < 0) { unbounded = false; break; }
-            }
-
-            if (unbounded) {
-                state.status = SolutionStatus::kUnbounded;
-                return;
-            }
-
-            // Perform minimum ratio test for leaving variable
-            Matrix xB = state.x.submatrix_rows(state.bv); 
-            
-            Number min_ratio = 0;
-            size_t min_ratio_winner = 0;
-            for (size_t i = 0; i < state.bv.size(); ++i) {
-                Number x = xB(i, 0);
-                Number d = dB(i, 0);
-                if (x > 0) {
-                    Number ratio = -x / d;
-                    if (ratio < min_ratio || min_ratio == 0) {
-                        min_ratio = ratio;
-                        min_ratio_winner = i;
+                if (e.value < -Eps) { 
+                    if (e.value < most_negative) {
+                        entering_var = nbv[e.col];
+                        most_negative = e.value;
                     }
                 }
             }
 
-            if (min_ratio == 0) {
-                state.status = SolutionStatus::kUnbounded;
+            if (most_negative == 0) {
+                status = SolutionStatus::kOptimal;
                 return;
-            }       
-
-            Matrix d(state.x.rows(), 1);
-            for (const auto& e: dB) { d(state.bv[e.row], 0) = e.value; }
-            d(enter_var, 0) = 1;
-            state.x += d * min_ratio;
-            
-            size_t leaving_var = state.bv[min_ratio_winner];
-
-            state.bv[min_ratio_winner] = enter_var;
-
-            for (size_t i = 0; i < state.nbv.size(); ++i) {
-                if (state.nbv[i] == enter_var) { state.nbv[i] = leaving_var; break; }
             }
 
-            // Compute the new Binv
-            Matrix aug = Matrix::augment(state.Binv, dB * -1);
+#ifdef LP_H_DEBUG
+            std::cout << "entering_var = " << entering_var << std::endl;
+#endif
 
-            // We want last column of aug to be e_j, where j = enter_var
-            aug.scale_row(enter_var, -1/dB(enter_var, 0));
+            // Compute feasible direction vector and check if unbounded.
+            Matrix d(x.rows(), 1);
+            Matrix dB = Binv * A.submatrix_cols({ entering_var }) * -1.0;
+            bool unbounded = true;
             for (const auto& e : dB) {
-                if (e.row == enter_var) { continue; }
-                aug.add_rows(e.row, enter_var, e.value);
+                if (e.value < -Eps) { unbounded = false; }
+                d(bv[e.row], 0) = e.value;
+            }
+
+            if (unbounded) {
+                status = SolutionStatus::kUnbounded;
+                return;
+            }
+            d(entering_var, 0) = 1;
+
+#ifdef LP_H_DEBUG
+            std::cout << "d = " << std::endl << d;
+#endif
+
+            // Perform minimum-ratio test to find leaving variable
+            size_t leaving_var = 0;
+            Number theta = 0;
+            for (const auto& e : dB) {
+                if (e.value > -Eps) { continue; }
+                Number r = -x(bv[e.row], 0) / e.value;
+
+#ifdef LP_H_DEBUG
+                std::cout << "i=" << bv[e.row] <<": " << -x(bv[e.row],0) << "/" << e.value << "=" << r << std::endl;
+#endif
+
+                if (r < theta || theta == 0) {
+                    theta = r;
+                    leaving_var = e.row;
+                }
+            }
+
+#ifdef LP_H_DEBUG
+            std::cout << "leaving_var = " << bv[leaving_var] << std::endl;
+            std::cout << "theta = " << theta << std::endl;
+#endif
+
+            // Compute the new bfs
+            x += theta * d;
+
+            // Update Binv using EROs
+            Matrix aug = Matrix::augment(Binv, dB * -1);
+            
+            aug.scale_row(leaving_var, -1/dB(leaving_var, 0));
+            for (size_t r = 0; r < aug.rows(); ++r) {
+                if (r == leaving_var) { continue; } 
+                aug.add_rows(r, leaving_var, dB(r, 0));
             }
 
             std::vector<size_t> subcols;
-            for (size_t i = 0; i < state.Binv.cols(); ++i) { subcols.push_back(i); }
-            state.Binv = aug.submatrix_cols(subcols);
+            for (size_t i = 0; i < aug.cols() - 1; ++i) { subcols.push_back(i); }
+            Binv = aug.submatrix_cols(subcols);
+
+            // Finally update bv and nbv
+            size_t leaving_var_actual = bv[leaving_var];
+            bv[leaving_var] = entering_var;
+            for (size_t i = 0; i < nbv.size(); ++i) {
+                if (nbv[i] == entering_var) { nbv[i] = leaving_var_actual; break; }
+            }
         }
 
         Matrix& A;
         Matrix& b;
         Matrix& c;
-        HookFn hook;
+        Matrix cP;
+        Matrix x;
+        size_t iter_num;
+        std::vector<size_t> bv;
+        std::vector<size_t> nbv;
+        Matrix Binv;
+        SolutionStatus status;
+    private:
     };
-
-    struct Expression;
 
     struct Variable {
         size_t id;
@@ -570,6 +682,18 @@ namespace lp {
     }
     inline Expression operator*(Number lhs, Variable& rhs) { return rhs * lhs;} 
     inline Expression operator-(Variable& v) { return v * Number(-1); }
+    inline Expression operator+(Variable& lhs, Variable& rhs) { 
+        Expression e;
+        e += lhs;
+        e += rhs;
+        return e;
+    } 
+    inline Expression operator-(Variable& lhs, Variable& rhs) { 
+        Expression e;
+        e += lhs;
+        e -= rhs;
+        return e;
+    } 
 
     inline std::ostream& operator<<(std::ostream& os, const Expression& e) {
         bool first_term = true;
@@ -624,7 +748,6 @@ namespace lp {
         return os;
     }
 
-    enum class ProblemType { Min, Max };
 
     struct Solution {
         Number objective;
@@ -667,9 +790,22 @@ namespace lp {
 
         Solution solve() {
             // Convert to standard form
+            std::vector<ExtraVar> extra_vars;
+            for (size_t r = 0; r < constraints.size(); ++r) {
+                if (constraints[r].type == ConstraintType::LEq) {
+                    extra_vars.push_back(ExtraVar {
+                        ExtraVarType::Slack, variables.size() + extra_vars.size(), {std::make_pair(r, 1.0)}, 0
+                    });
+                }
+                if (constraints[r].type == ConstraintType::GEq) {
+                    extra_vars.push_back(ExtraVar {
+                        ExtraVarType::Slack, variables.size() + extra_vars.size(), {std::make_pair(r, -1.0)}, 0
+                    });
+                }
+            }
             
             // Build the matrix form
-            Matrix A(constraints.size(), variables.size());
+            Matrix A(constraints.size(), variables.size() + extra_vars.size());
             Matrix b(constraints.size(), 1);
             for (size_t i = 0; i < constraints.size(); ++i) {
                 for (const auto& v : constraints[i].lhs.terms) {
@@ -680,15 +816,23 @@ namespace lp {
                 b(i,0) = constraints[i].rhs;
             }
 
-            Matrix c(1, variables.size());
+            
+            Matrix c(1, variables.size() + extra_vars.size());
             for (const auto& v: objective_.terms) {
                 if (v.first == 0) { continue; }
                 c(0, v.second->id) = (type == ProblemType::Max) ? -v.first :  v.first;
             }
 
+            for (const auto& v : extra_vars) {
+                c(0, v.id) = v.obj_coeff;
+                for (const auto& p : v.constraint_coeff) {
+                    A(p.first, v.id) = p.second;
+                }
+            }
+
             // Solve
-            RevisedSimplex simplex(A, b, c);
-            RevisedSimplex::Solution s = simplex.solve();
+            Solver simplex(A, b, c);
+            Solver::Solution s = simplex.solve();
 
             Solution solution;
             solution.status = s.status;
@@ -718,6 +862,14 @@ namespace lp {
         Expression objective_;
         std::vector<Variable> variables;
         std::vector<Constraint> constraints;
+
+        enum class ExtraVarType { Slack };
+        struct ExtraVar {
+            ExtraVarType type;
+            size_t id;
+            std::vector<std::pair<size_t, Number>> constraint_coeff;
+            Number obj_coeff;
+        };
     };
 }
 
