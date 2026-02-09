@@ -407,7 +407,7 @@ namespace lp {
             return (c * x)(0,0);
         }
 
-        void start() {
+        virtual void start() {
 #ifdef LP_H_DEBUG
             std::cout << "c = " << std::endl << c;
             std::cout << "A = " << std::endl << A;
@@ -454,7 +454,7 @@ namespace lp {
             }
         }
 
-        void step() {
+        virtual void step() {
 #ifdef LP_H_DEBUG
             // Print the current status
             std::cout << std::endl << "Iteration #" << iter_num << ":" << std::endl;
@@ -869,6 +869,11 @@ namespace lp {
         }
 
         Solution solve() {
+            return solve<Solver>();
+        }
+
+        template <typename SolverT>
+        Solution solve() {
             // ------------------------
             // Convert to standard form
             // ------------------------
@@ -915,7 +920,7 @@ namespace lp {
             }
 
             // Solve
-            Solver simplex(A, b, c);
+            SolverT simplex(A, b, c);
             Solver::Solution s = simplex.solve();
 
             for (auto& t : transformations) {
