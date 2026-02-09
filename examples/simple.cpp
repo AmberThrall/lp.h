@@ -1,6 +1,5 @@
 #include <iostream>
 
-#define LP_H_DEBUG
 #include "../lp.h"
 using namespace lp;
 
@@ -30,7 +29,7 @@ int main() {
 
     Problem problem2 = Problem::maximize();
     x = problem2.add_var(0, lp::Inf, "x");
-    y = problem2.add_var(0, lp::Inf, "y");
+    y = problem2.add_var(-lp::Inf, 0, "y");
     problem2.objective(40*x - 30*y);
     problem2.constraint(x - y <= 12);
     problem2.constraint(2*x - y <= 16);

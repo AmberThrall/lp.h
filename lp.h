@@ -794,24 +794,49 @@ namespace lp {
     };
 
     namespace transformations {
-        class ExtraVar {
+        class Base {
         public:
-            ExtraVar(size_t id) : id(id) {}
-            virtual ~ExtraVar() {}
+            Base(bool additional_var) : additional_var(additional_var) {}
+            virtual ~Base() {}
             virtual void apply_matrix(Matrix&) {}
             virtual void apply_obj(Matrix&) {}
             virtual void apply_soln(Solver::Solution&) {}
+            virtual bool adds_var() { return additional_var; }
+            virtual size_t var_id() { return 0; }
         protected:
+            bool additional_var;
+        };
+
+        class NegateVar : public Base {
+        public:
+            NegateVar(size_t id) : Base(false), id(id) {}
+            void apply_matrix(Matrix& A) override {
+                for (size_t r = 0; r < A.rows(); ++r) {
+                    A(r, id) *= -1;
+                }
+            }
+    
+            void apply_obj(Matrix& c) override {
+                c(0, id) *= -1;             
+            }
+
+            void apply_soln(Solver::Solution& s) override {
+                s.x[id] *= -1;             
+            }
+        private:
             size_t id;
         };
 
-        class SlackVar : public ExtraVar {
+        class SlackVar : public Base {
         public:
-            SlackVar(size_t id, size_t row, ConstraintType type) : ExtraVar(id), row(row), type(type) {}
+            SlackVar(size_t id, size_t row, ConstraintType type) : Base(true), id(id), row(row), type(type) {}
             void apply_matrix(Matrix& A) override {
                 A(row, id) = type == ConstraintType::LEq ? 1 : -1;
             }
+
+            size_t var_id() override { return id; }
         private:
+            size_t id;
             size_t row;
             ConstraintType type;
         };
@@ -844,16 +869,29 @@ namespace lp {
         }
 
         Solution solve() {
+            // ------------------------
             // Convert to standard form
-            std::vector<transformations::ExtraVar*> extra_vars;
+            // ------------------------
+            std::vector<transformations::Base*> transformations;
+            size_t num_extra_vars = 0;
+            
+            // 1. Convert non-equality constraints to equality with slack variables
             for (size_t r = 0; r < constraints.size(); ++r) {
                 if (constraints[r].type != ConstraintType::Eq) {
-                    extra_vars.push_back(new transformations::SlackVar(variables.size() + extra_vars.size(), r, constraints[r].type));
+                    transformations.push_back(new transformations::SlackVar(variables.size() + num_extra_vars, r, constraints[r].type));
+                    num_extra_vars += 1;
+                }
+            }
+
+            // 2. Negate negative variables.
+            for (size_t c = 0; c < variables.size(); ++c) {
+                if (variables[c].max == 0.0) { 
+                    transformations.push_back(new transformations::NegateVar(c));
                 }
             }
             
             // Build the matrix form
-            Matrix A(constraints.size(), variables.size() + extra_vars.size());
+            Matrix A(constraints.size(), variables.size() + num_extra_vars);
             Matrix b(constraints.size(), 1);
             for (size_t i = 0; i < constraints.size(); ++i) {
                 for (const auto& v : constraints[i].lhs.terms) {
@@ -865,24 +903,24 @@ namespace lp {
             }
 
             
-            Matrix c(1, variables.size() + extra_vars.size());
+            Matrix c(1, variables.size() + num_extra_vars);
             for (const auto& v: objective_.terms) {
                 if (v.first == 0) { continue; }
                 c(0, v.second->id) = (type == ProblemType::Max) ? -v.first :  v.first;
             }
 
-            for (auto& ev : extra_vars) {
-                ev->apply_matrix(A);
-                ev->apply_obj(c);
+            for (auto& t : transformations) {
+                t->apply_matrix(A);
+                t->apply_obj(c);
             }
 
             // Solve
             Solver simplex(A, b, c);
             Solver::Solution s = simplex.solve();
 
-            for (auto& ev : extra_vars) {
-                ev->apply_soln(s);
-                delete ev;
+            for (auto& t : transformations) {
+                t->apply_soln(s);
+                delete t;
             }
 
             Solution solution;
