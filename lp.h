@@ -762,6 +762,29 @@ namespace lp {
         }
     };
 
+    namespace transformations {
+        class ExtraVar {
+        public:
+            ExtraVar(size_t id) : id(id) {}
+            virtual void apply_matrix(Matrix&) {};
+            virtual void apply_obj(Matrix&) {};
+            virtual void apply_soln(Solver::Solution&) {};
+        protected:
+            size_t id;
+        };
+
+        class SlackVar : public ExtraVar {
+        public:
+            SlackVar(size_t id, size_t row, ConstraintType type) : ExtraVar(id), row(row), type(type) {}
+            void apply_matrix(Matrix& A) override {
+                A(row, id) = type == ConstraintType::LEq ? 1 : -1;
+            }
+        private:
+            size_t row;
+            ConstraintType type;
+        };
+    }
+
     class Problem {
     public:
         Problem(ProblemType type) : type(type) {}
@@ -790,17 +813,10 @@ namespace lp {
 
         Solution solve() {
             // Convert to standard form
-            std::vector<ExtraVar> extra_vars;
+            std::vector<transformations::ExtraVar> extra_vars;
             for (size_t r = 0; r < constraints.size(); ++r) {
-                if (constraints[r].type == ConstraintType::LEq) {
-                    extra_vars.push_back(ExtraVar {
-                        ExtraVarType::Slack, variables.size() + extra_vars.size(), {std::make_pair(r, 1.0)}, 0
-                    });
-                }
-                if (constraints[r].type == ConstraintType::GEq) {
-                    extra_vars.push_back(ExtraVar {
-                        ExtraVarType::Slack, variables.size() + extra_vars.size(), {std::make_pair(r, -1.0)}, 0
-                    });
+                if (constraints[r].type != ConstraintType::Eq) {
+                    extra_vars.push_back(transformations::SlackVar(variables.size() + extra_vars.size(), r, constraints[r].type));
                 }
             }
             
@@ -823,16 +839,18 @@ namespace lp {
                 c(0, v.second->id) = (type == ProblemType::Max) ? -v.first :  v.first;
             }
 
-            for (const auto& v : extra_vars) {
-                c(0, v.id) = v.obj_coeff;
-                for (const auto& p : v.constraint_coeff) {
-                    A(p.first, v.id) = p.second;
-                }
+            for (auto& ev : extra_vars) {
+                ev.apply_matrix(A);
+                ev.apply_obj(c);
             }
 
             // Solve
             Solver simplex(A, b, c);
             Solver::Solution s = simplex.solve();
+
+            for (auto& ev : extra_vars) {
+                ev.apply_soln(s);
+            }
 
             Solution solution;
             solution.status = s.status;
@@ -862,14 +880,6 @@ namespace lp {
         Expression objective_;
         std::vector<Variable> variables;
         std::vector<Constraint> constraints;
-
-        enum class ExtraVarType { Slack };
-        struct ExtraVar {
-            ExtraVarType type;
-            size_t id;
-            std::vector<std::pair<size_t, Number>> constraint_coeff;
-            Number obj_coeff;
-        };
     };
 }
 
