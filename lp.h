@@ -424,7 +424,7 @@ namespace lp {
                 step();
             }
 
-            if (A.cols() > original_num_cols) {
+            if (cur_phase == 1) {
                 Number z = 0;
                 for (size_t i = 0; i < cP.cols(); ++i) {
                     z += cP(0, i) * x(i, 0);
@@ -440,6 +440,8 @@ namespace lp {
 #ifdef LP_H_DEBUG
                 std::cout << "Auxiliary LP solved. Problem is feasible (z*=" << z << ")." << std::endl;
 #endif
+                
+                // TODO: Find basis without auxiliary variables.
 
                 A.resize(A.rows(), original_num_cols);
                 c = _c;
@@ -496,20 +498,25 @@ namespace lp {
             std::cout << "A = " << std::endl << A;
             std::cout << "b = " << std::endl << b;
 #endif
+            std::vector<bool> identity_cols(A.rows(), false);
 
-            // TODO: Fix this identify code
             // Quickly check if the identity matrix is a submatrix, if so, set those columns as bv
             for (size_t i = 0; i < A.cols(); ++i) {
                 double nonzero_entry = 0;
                 size_t num_zeros = 0;
+                size_t nonzero_row = 0;
                 for (size_t j = 0; j < A.rows(); ++j) {
                     if (std::abs(A(j,i)) < Eps) { 
                         num_zeros += 1;
                     }
-                    else { nonzero_entry = A(j,i); }
+                    else { 
+                        nonzero_entry = A(j,i); 
+                        nonzero_row = j;
+                    }
                 }
 
                 if (num_zeros == A.rows()-1 && std::abs(nonzero_entry-1) < Eps && bv.size() < A.rows()) {
+                    identity_cols[nonzero_row] = true;
                     bv.push_back(i);
                 }
                 else {
@@ -518,7 +525,8 @@ namespace lp {
             }
 
             // Add artificial variables
-            if (bv.size() != A.rows()) {
+            if (bv.size() != A.rows() || std::find(identity_cols.begin(), identity_cols.end(), false) != identity_cols.end()) {
+                cur_phase = 1;
                 bv.clear();
                 nbv.clear();
                 
@@ -541,6 +549,9 @@ namespace lp {
                 std::cout << "A = " << std::endl << A;
                 std::cout << "b = " << std::endl << b;
 #endif
+            }
+            else {
+                cur_phase = 2;
             }
 
             // Compute basis matrix and invert
@@ -687,6 +698,8 @@ namespace lp {
         std::vector<size_t> nbv;
         Matrix Binv;
         SolutionStatus status;
+        size_t cur_phase;
+    private:
         size_t original_num_cols;
     };
 
