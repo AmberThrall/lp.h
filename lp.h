@@ -88,12 +88,28 @@ namespace lp {
             return aug;
         }
 
+        /// Resizes the matrix. Any non-zero entries outside of the new dimensions are dropped.
+        void resize(size_t r, size_t c) {
+            for (size_t i = 0; i < value.size(); ++i) {
+                if (row[i] >= r || col[i] >= c) {
+                    value.erase(value.begin() + i);
+                    col.erase(col.begin() + i);
+                    row.erase(row.begin() + i);
+                    i -= 1;
+                }
+            }
+        
+            n_rows = r;
+            n_cols = c;
+        }
+
         /// Returns the number of rows
         size_t rows() const { return n_rows; }
 
         /// Returns the number of columns
         size_t cols() const { return n_cols; }
 
+        /// Checks if the matrix is square
         bool square() const { return rows() == cols(); }
 
         /// Returns a submatrix formed by a list of columns
@@ -391,32 +407,80 @@ namespace lp {
     public:
         DefaultSolver() {} 
 
-        Solution solve(Matrix A, Matrix b, Matrix c) {
-            this->A = A;
-            this->b = b;
-            this->c = c;
-            this->x = Matrix(A.cols(), 1);
+        Solution solve(Matrix _A, Matrix _b, Matrix _c) {
+            A = std::move(_A);
+            b = std::move(_b);
+            c = _c;
+            x = Matrix(A.cols(), 1);
+            original_num_cols = A.cols();
 
-            cP = c;
             status = SolutionStatus::kFeasible;
-            start();
             iter_num = 0;
+            start();
+            cP = c;
 
             while (status == SolutionStatus::kFeasible) {
                 iter_num += 1;
                 step();
             }
 
+            if (A.cols() > original_num_cols) {
+                Number z = 0;
+                for (size_t i = 0; i < cP.cols(); ++i) {
+                    z += cP(0, i) * x(i, 0);
+                }
+                if (z > Eps) {
+#ifdef LP_H_DEBUG
+                std::cout << "Auxiliary LP solved. Problem is infeasible (z*=" << z << ")." << std::endl;
+#endif
+                    std::vector<Number> x_soln(original_num_cols);
+                    for (const auto& e: x) { x_soln[e.row] = e.value; }
+                    return Solution { x_soln, z, SolutionStatus::kInfeasible };
+                }
+#ifdef LP_H_DEBUG
+                std::cout << "Auxiliary LP solved. Problem is feasible (z*=" << z << ")." << std::endl;
+#endif
+
+                A.resize(A.rows(), original_num_cols);
+                c = _c;
+                cP = c;
+                x.resize(original_num_cols, 1);
+
+                // Remove auxiliary variables from bv & nbv
+                for (size_t i = 0; i < bv.size(); ++i) {
+                    if (bv[i] >= original_num_cols) {
+                        bv.erase(bv.begin() + i);
+                        i -= 1;
+                    }
+                }
+                for (size_t i = 0; i < nbv.size(); ++i) {
+                    if (nbv[i] >= original_num_cols) {
+                        nbv.erase(nbv.begin() + i);
+                        i -= 1;
+                    }
+                }
+
+                status = SolutionStatus::kFeasible;
+                while (status == SolutionStatus::kFeasible) {
+                    iter_num += 1;
+                    step();
+                }
+            }
+
             // Create the solution
             Number z = obj_value();
-            std::vector<Number> x_soln(A.cols());
+            std::vector<Number> x_soln(original_num_cols);
             for (const auto& e: x) { x_soln[e.row] = e.value; }
 
             return Solution { x_soln, z, status };
         }
     protected:
         Number obj_value() const {
-            return (c * x)(0,0);
+            Number obj = 0;
+            for (size_t i = 0; i < c.cols(); ++i) {
+                obj += c(0, i) * x(i, 0);
+            }
+            return obj;
         }
 
         virtual void start() {
@@ -426,42 +490,57 @@ namespace lp {
             std::cout << "b = " << std::endl << b;
 #endif
 
-            // Determine the initial bfs
+            // TODO: Fix this identify code
+            // Quickly check if the identity matrix is a submatrix, if so, set those columns as bv
             for (size_t i = 0; i < A.cols(); ++i) {
+                double nonzero_entry = 0;
                 size_t num_zeros = 0;
                 for (size_t j = 0; j < A.rows(); ++j) {
                     if (std::abs(A(j,i)) < Eps) { 
                         num_zeros += 1;
                     }
+                    else { nonzero_entry = A(j,i); }
                 }
 
-                if (num_zeros == A.rows()-1) {
+                if (num_zeros == A.rows()-1 && std::abs(nonzero_entry-1) < Eps && bv.size() < A.rows()) {
                     bv.push_back(i);
-                    if (bv.size() >= A.rows()) { break; }
                 }
-            }
-
-            // TODO: Handle this case.
-            if (bv.size() != A.rows()) {
-                throw std::invalid_argument("failed to find initial bfs.");
-            }
-
-            for (size_t i = 0; i < A.cols(); ++i) {
-                if (std::find(bv.begin(), bv.end(), i) == bv.end()) {
+                else {
                     nbv.push_back(i);
                 }
             }
 
-            // Compute basis matrix and invert
-            Matrix basis = A.submatrix_cols(bv);
+            // Add artificial variables
+            if (bv.size() != A.rows()) {
+                bv.clear();
+                nbv.clear();
+                
 #ifdef LP_H_DEBUG
-            std::cout << "basis = " << std::endl << basis;
+                std::cout << "No identity matrix found, adding artificial variables." << std::endl;
 #endif
-            Binv = basis.inverse();
+                A.resize(A.rows(), A.cols() + A.rows());
+                c = Matrix(1, c.cols() + A.rows());
+                x.resize(c.cols() + A.rows(), 1);
+                for (size_t i = 0; i < A.rows(); ++i) {
+                    bv.push_back(original_num_cols + i);
+                    A(i, original_num_cols + i) = 1;
+                    c(0, original_num_cols + i) = 1;
+                }
+
+                for (size_t i = 0; i < original_num_cols; ++i) { nbv.push_back(i); }
+#ifdef LP_H_DEBUG
+                std::cout << "New problem:" << std::endl;
+                std::cout << "c = " << std::endl << c;
+                std::cout << "A = " << std::endl << A;
+                std::cout << "b = " << std::endl << b;
+#endif
+            }
+
+            // Compute basis matrix and invert
+            Binv = A.submatrix_cols(bv);
 
             // Determine initial bfs
-            Matrix xB = Binv * b;
-            for (const auto & e : xB) {
+            for (const auto & e : b) {
                 x(bv[e.row],0) = e.value;
             }
         }
@@ -601,6 +680,7 @@ namespace lp {
         std::vector<size_t> nbv;
         Matrix Binv;
         SolutionStatus status;
+        size_t original_num_cols;
     };
 
     struct Variable {
