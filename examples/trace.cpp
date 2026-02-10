@@ -5,7 +5,7 @@ using namespace lp;
 
 class TraceSolver : public DefaultSolver {
 public:
-    Solution solve(Matrix& A, Matrix& b, Matrix& c) override {
+    Solution solve(Matrix A, Matrix b, Matrix c) override {
         std::cout << "Performing revised simplex method:" << std::endl;
 
         return DefaultSolver::solve(A, b, c); 

@@ -383,7 +383,7 @@ namespace lp {
         };
 
         virtual ~Solver() {}
-        virtual Solution solve(Matrix& A, Matrix& b, Matrix& c) = 0;
+        virtual Solution solve(Matrix A, Matrix b, Matrix c) = 0;
     };
 
     /// Performs revised simplex method to solve the LP.
@@ -391,7 +391,7 @@ namespace lp {
     public:
         DefaultSolver() {} 
 
-        Solution solve(Matrix& A, Matrix& b, Matrix& c) {
+        Solution solve(Matrix A, Matrix b, Matrix c) {
             this->A = A;
             this->b = b;
             this->c = c;
@@ -934,7 +934,7 @@ namespace lp {
             }
 
             // Solve
-            Solver::Solution s = solver->solve(A, b, c);
+            Solver::Solution s = solver->solve(std::move(A), std::move(b), std::move(c));
 
             for (auto& t : transformations) {
                 t->apply_soln(s);
