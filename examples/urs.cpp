@@ -6,10 +6,9 @@ using namespace lp;
 int main() {
     Problem problem = Problem::maximize();
     Variable x1 = problem.add_var(0, 5);
-    Variable x2 = problem.add_var(-lp::Infinity, lp::Infinity);
+    Variable x2 = problem.add_var(-10, 10);
     problem.objective(30*x1 - 4*x2);
     problem.constraint(5*x1 - x2 <= 30);
-    problem.constraint(1*x1 <= 5);
 
     std::cout << "Problem: " << std::endl << problem;
 

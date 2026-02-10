@@ -911,6 +911,7 @@ namespace lp {
             Base(bool additional_var) : additional_var(additional_var) {}
             virtual ~Base() {}
             virtual void apply_matrix(Matrix&) {}
+            virtual void apply_rhs(Matrix&) {}
             virtual void apply_obj(Matrix&) {}
             virtual void apply_soln(Solver::Solution&) {}
             virtual bool adds_var() { return additional_var; }
@@ -936,6 +937,27 @@ namespace lp {
             }
         private:
             size_t id;
+        };
+
+        class VariableBound : public Base {
+        public:
+            VariableBound(size_t constraint_id, size_t var_id, size_t slack_var, ConstraintType type, Number bound) : Base(true), 
+                constraint_id(constraint_id), var_id(var_id), slack_var(slack_var), type(type), bound(bound) {}
+
+            void apply_matrix(Matrix& A) override {
+                A(constraint_id, var_id) = 1;
+                A(constraint_id, slack_var) = type == ConstraintType::LEq ? 1 : -1;
+            };
+
+            void apply_rhs(Matrix& b) override {
+                b(constraint_id, 0) = bound;
+            };
+        private:
+            size_t constraint_id;
+            size_t var_id;
+            size_t slack_var;
+            ConstraintType type;
+            Number bound;
         };
 
         class SlackVar : public Base {
@@ -1017,6 +1039,7 @@ namespace lp {
             // ------------------------
             std::vector<transformations::Base*> transformations;
             size_t num_extra_vars = 0;
+            size_t num_extra_constraints = 0;
             
             // 1. Convert non-equality constraints to equality with slack variables
             for (size_t r = 0; r < constraints.size(); ++r) {
@@ -1028,18 +1051,58 @@ namespace lp {
 
             // 2. Variable bounds
             for (size_t c = 0; c < variables.size(); ++c) {
-                if (std::abs(variables[c].max) < Eps) { 
+                if (std::abs(variables[c].max) < Eps) { // Variable is negative
                     transformations.push_back(new transformations::NegateVar(c));
+
+                    if (variables[c].min > -Infinity) {
+                        transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints,
+                                    c, variables.size() + num_extra_vars, ConstraintType::LEq, -variables[c].min));            
+                        num_extra_constraints += 1;
+                        num_extra_vars += 1;
+                    }
                 }
-                else if (variables[c].min < -Eps) {
+                else if (variables[c].min < -Eps) { // Variable is URS
                     transformations.push_back(new transformations::URSVar(c, variables.size() + num_extra_vars));
+                    size_t cneg = variables.size() + num_extra_vars;
                     num_extra_vars += 1;
+
+                    if (variables[c].min > -Infinity) {
+                        transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints,
+                                    c, variables.size() + num_extra_vars, ConstraintType::GEq, variables[c].min));            
+                        transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints + 1,
+                                    cneg, variables.size() + num_extra_vars + 1, ConstraintType::GEq, variables[c].min));            
+                        num_extra_constraints += 2;
+                        num_extra_vars += 2;
+                    }
+
+                    if (variables[c].max < Infinity) {
+                        transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints,
+                                    c, variables.size() + num_extra_vars, ConstraintType::LEq, variables[c].max));            
+                        transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints + 1,
+                                    cneg, variables.size() + num_extra_vars + 1, ConstraintType::LEq, variables[c].max));            
+                        num_extra_constraints += 2;
+                        num_extra_vars += 2;
+                    }
+                }
+                else { // Variable is positive
+                    if (variables[c].max < Infinity) {
+                        transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints,
+                                    c, variables.size() + num_extra_vars, ConstraintType::LEq, variables[c].max));            
+                        num_extra_constraints += 1;
+                        num_extra_vars += 1;
+                    }
+                    if (variables[c].min > Eps) {
+                        transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints,
+                                    c, variables.size() + num_extra_vars, ConstraintType::GEq, variables[c].min));            
+                        num_extra_constraints += 1;
+                        num_extra_vars += 1;
+                    }
                 }
             }
             
             // Build the matrix form
-            Matrix A(constraints.size(), variables.size() + num_extra_vars);
-            Matrix b(constraints.size(), 1);
+            Matrix A(constraints.size() + num_extra_constraints, variables.size() + num_extra_vars);
+            Matrix b(constraints.size() + num_extra_constraints, 1);
             for (size_t i = 0; i < constraints.size(); ++i) {
                 for (const auto& v : constraints[i].lhs.terms) {
                     if (v.first == 0) { continue; }
@@ -1058,6 +1121,7 @@ namespace lp {
 
             for (auto& t : transformations) {
                 t->apply_matrix(A);
+                t->apply_rhs(b);
                 t->apply_obj(c);
             }
 
