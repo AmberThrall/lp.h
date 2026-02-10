@@ -467,8 +467,15 @@ namespace lp {
                 }
             }
 
+            // Check feasibility
+            Number z = 0;
+            for (size_t i = 0; i < cP.cols(); ++i) {
+                z += cP(0, i) * x(i, 0);
+            }
+            if (z > Eps) { status = SolutionStatus::kInfeasible; }
+
             // Create the solution
-            Number z = obj_value();
+            z = obj_value();
             std::vector<Number> x_soln(original_num_cols);
             for (const auto& e: x) { x_soln[e.row] = e.value; }
 
