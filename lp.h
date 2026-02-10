@@ -370,7 +370,7 @@ namespace lp {
         return os << "Unknown";
     }
 
-    /// Performs revised simplex method to solve the LP:
+    /// Base class solver that takes in a problem of the form:
     /// min z = c^Tx
     /// s.t. Ax == b
     ///       x >= 0
@@ -382,9 +382,21 @@ namespace lp {
             SolutionStatus status;
         };
 
-        Solver(Matrix& a, Matrix& b, Matrix& c) : A(a), b(b), c(c), cP(c), x(Matrix(a.cols(), 1)) {}
+        virtual ~Solver() {}
+        virtual Solution solve(Matrix& A, Matrix& b, Matrix& c) = 0;
+    };
 
-        Solution solve() {
+    /// Performs revised simplex method to solve the LP.
+    class DefaultSolver : public Solver {
+    public:
+        DefaultSolver() {} 
+
+        Solution solve(Matrix& A, Matrix& b, Matrix& c) {
+            this->A = A;
+            this->b = b;
+            this->c = c;
+            this->x = Matrix(A.cols(), 1);
+
             cP = c;
             status = SolutionStatus::kFeasible;
             start();
@@ -578,9 +590,10 @@ namespace lp {
             }
         }
 
-        Matrix& A;
-        Matrix& b;
-        Matrix& c;
+    protected:
+        Matrix A;
+        Matrix b;
+        Matrix c;
         Matrix cP;
         Matrix x;
         size_t iter_num;
@@ -588,7 +601,6 @@ namespace lp {
         std::vector<size_t> nbv;
         Matrix Binv;
         SolutionStatus status;
-    private:
     };
 
     struct Variable {
@@ -869,11 +881,13 @@ namespace lp {
         }
 
         Solution solve() {
-            return solve<Solver>();
+            DefaultSolver * solver = new DefaultSolver();
+            Solution soln = solve(solver);
+            delete solver;
+            return soln;
         }
 
-        template <typename SolverT>
-        Solution solve() {
+        Solution solve(Solver * solver) {
             // ------------------------
             // Convert to standard form
             // ------------------------
@@ -920,8 +934,7 @@ namespace lp {
             }
 
             // Solve
-            SolverT simplex(A, b, c);
-            Solver::Solution s = simplex.solve();
+            Solver::Solution s = solver->solve(A, b, c);
 
             for (auto& t : transformations) {
                 t->apply_soln(s);

@@ -3,20 +3,33 @@
 #include "../lp.h"
 using namespace lp;
 
-class TraceSolver : public Solver {
+class TraceSolver : public DefaultSolver {
 public:
-    TraceSolver(Matrix& a, Matrix& b, Matrix& c) : Solver(a, b, c) {}
-protected:
-    void step() override {
-        Solver::step();
+    Solution solve(Matrix& A, Matrix& b, Matrix& c) override {
+        std::cout << "Performing revised simplex method:" << std::endl;
 
+        return DefaultSolver::solve(A, b, c); 
+    };
+protected:
+    void start() override {
+        DefaultSolver::start();
+        print_status();
+    }
+
+    void step() override {
+        DefaultSolver::step();
+        print_status();
+    }
+private:
+    void print_status() {
         std::cout << "Iteration #" << iter_num << ": ";
         std::cout << "x = <";
         for (size_t i = 0; i < x.rows(); ++i) { 
             if (i > 0) { std::cout << ","; }
             std::cout << x(i,0);
         }
-        std::cout << ">" << std::endl;
+        std::cout << ">; z* = " << obj_value() << " (" << status << ")" << std::endl;
+
     }
 };
 
@@ -31,7 +44,10 @@ int main() {
     std::cout << "Problem: " << std::endl << problem;
     std::cout << std::endl;
 
-    Solution soln = problem.solve<TraceSolver>();
+    TraceSolver * solver = new TraceSolver();
+    Solution soln = problem.solve(solver);
+    delete solver;
+
     std::cout << std::endl << "Solution: ";
     if (soln.status != SolutionStatus::kOptimal) {
         std::cout << soln.status << std::endl;
