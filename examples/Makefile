@@ -1,5 +1,5 @@
 CXX      := g++
-CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -pedantic -fsanitize=address -g
+CXXFLAGS := -O2 -Wall -Wextra -pedantic -fsanitize=address -g
 
 SRC      := $(wildcard *.cpp)
 BINS     := $(SRC:.cpp=)
