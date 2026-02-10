@@ -914,7 +914,6 @@ namespace lp {
             virtual void apply_obj(Matrix&) {}
             virtual void apply_soln(Solver::Solution&) {}
             virtual bool adds_var() { return additional_var; }
-            virtual size_t var_id() { return 0; }
         protected:
             bool additional_var;
         };
@@ -945,12 +944,37 @@ namespace lp {
             void apply_matrix(Matrix& A) override {
                 A(row, id) = type == ConstraintType::LEq ? 1 : -1;
             }
-
-            size_t var_id() override { return id; }
         private:
             size_t id;
             size_t row;
             ConstraintType type;
+        };
+
+        class URSVar : public Base {
+        public:
+            URSVar(size_t vplus, size_t vneg) : Base(true), vplus(vplus), vneg(vneg) {}
+            void apply_matrix(Matrix& A) override {
+                for (size_t r = 0; r < A.rows(); ++r) {
+                    Number v = A(r, vplus);
+                    if (std::abs(v) > Eps) {
+                        A(r, vneg) = -v; 
+                    }
+                }
+            }
+
+            void apply_obj(Matrix& c) override {
+                Number v = c(0, vplus);
+                if (std::abs(v) > Eps) {
+                    c(0, vneg) = -v;
+                }
+            }
+
+            void apply_soln(Solver::Solution& s) override {
+                s.x[vplus] -= s.x[vneg];             
+            }
+        private:
+            size_t vplus;
+            size_t vneg;
         };
     }
 
@@ -1002,10 +1026,14 @@ namespace lp {
                 }
             }
 
-            // 2. Negate negative variables.
+            // 2. Variable bounds
             for (size_t c = 0; c < variables.size(); ++c) {
-                if (variables[c].max == 0.0) { 
+                if (std::abs(variables[c].max) < Eps) { 
                     transformations.push_back(new transformations::NegateVar(c));
+                }
+                else if (variables[c].min < -Eps) {
+                    transformations.push_back(new transformations::URSVar(c, variables.size() + num_extra_vars));
+                    num_extra_vars += 1;
                 }
             }
             
