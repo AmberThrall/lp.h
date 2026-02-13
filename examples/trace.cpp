@@ -22,7 +22,7 @@ protected:
     }
 private:
     void print_status() {
-        std::cout << "Iteration #" << iter_num << ": ";
+        std::cout << "Iteration #" << iter_num << " (Phase " << cur_phase << "): ";
         std::cout << "x = " << x;
         std::cout << "; z* = " << obj_value() << " (" << status << ")" << std::endl;
 
@@ -34,8 +34,8 @@ int main() {
     Variable x = problem.add_var(0, lp::Infinity, "x");
     Variable y = problem.add_var(0, lp::Infinity, "y");
     problem.objective(-x - y);
-    problem.constraint(2*x + y <= 4);
-    problem.constraint(3*x + 5*y <= 15);
+    problem.constraint(2*x + y == 4);
+    problem.constraint(3*x + 5*y == 15);
 
     std::cout << "Problem: " << std::endl << problem;
     std::cout << std::endl;

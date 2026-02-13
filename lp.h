@@ -640,8 +640,10 @@ namespace lp {
             }
 
             // Check feasibility
-            Number z = cP.dot(x);
-            if (z > Eps) { status = SolutionStatus::kInfeasible; }
+            if (status == SolutionStatus::kOptimal) {
+                Number z = cP.dot(x);
+                if (z > Eps) { status = SolutionStatus::kInfeasible; }
+            }
 
             // Create the solution
             z = obj_value();
@@ -665,14 +667,12 @@ namespace lp {
 
             // Quickly check if the identity matrix is a submatrix, if so, set those columns as bv
             for (size_t i = 0; i < A.cols(); ++i) {
-                double nonzero_entry = 0;
-                size_t num_zeros = 0;
+                Number nonzero_entry = 0;
+                size_t num_zeros = A.rows();
                 size_t nonzero_row = 0;
                 for (auto it = A.begin(i); it != A.end(i); ++it) {
-                    if (std::abs((*it).value) < Eps) { 
-                        num_zeros += 1;
-                    }
-                    else { 
+                    if (std::abs((*it).value) > Eps) { 
+                        num_zeros -= 1;
                         nonzero_entry = (*it).value; 
                         nonzero_row = (*it).row;
                     }
