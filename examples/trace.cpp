@@ -5,7 +5,7 @@ using namespace lp;
 
 class TraceSolver : public DefaultSolver {
 public:
-    Solution solve(Matrix A, Matrix b, Matrix c) override {
+    Solution solve(Matrix A, Vector b, Vector c) override {
         std::cout << "Performing revised simplex method:" << std::endl;
 
         return DefaultSolver::solve(A, b, c); 
@@ -23,12 +23,8 @@ protected:
 private:
     void print_status() {
         std::cout << "Iteration #" << iter_num << ": ";
-        std::cout << "x = <";
-        for (size_t i = 0; i < x.rows(); ++i) { 
-            if (i > 0) { std::cout << ","; }
-            std::cout << x(i,0);
-        }
-        std::cout << ">; z* = " << obj_value() << " (" << status << ")" << std::endl;
+        std::cout << "x = " << x;
+        std::cout << "; z* = " << obj_value() << " (" << status << ")" << std::endl;
 
     }
 };

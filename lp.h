@@ -52,14 +52,122 @@ namespace lp {
     constexpr Number Infinity = std::numeric_limits<Number>::infinity();
     constexpr Number Eps = 1e-9;
 
-    /// Simple COO-format matrix class used during simplex method
+    /// Simple dense vector class
+    class Vector {
+    public:
+        /// Creates a 0-vector
+        Vector() : Vector(0) {}
+
+        /// Creates a n-vector filled with v
+        Vector(size_t n, Number v=0) {
+            value = std::vector<Number>(n, v);
+        }
+
+        /// Returns the size of the vector
+        size_t size() const { return value.size(); }
+
+        /// Computes the dot product of two vectors
+        Number dot(const Vector& other) const {
+            if (size() != other.size()) { throw std::invalid_argument("dot product: size mismatch."); }
+
+            Number v = 0; 
+            for (size_t i = 0; i < size(); ++i) {
+                v += value[i] * other[i];
+            }
+            return v;
+        }
+
+        /// Resizes the vector
+        void resize(size_t new_size) {
+            value.resize(new_size);
+        }
+
+        /// Returns a subvector
+        Vector subvector(std::vector<size_t> indices) const {
+            Vector ret(indices.size());
+            for (size_t i = 0; i < indices.size(); ++i) {
+                size_t idx = indices[i];
+                if (idx >= size()) { throw std::out_of_range("Vector: out-of-bounds."); }
+                ret[i] = value[idx];
+            }
+            return ret;
+        }
+
+        Number& operator[](size_t idx) {
+            if (idx >= size()) { throw std::out_of_range("Vector: out-of-bounds."); }
+            return value[idx];
+        }
+
+        const Number& operator[](size_t idx) const {
+            if (idx >= size()) { throw std::out_of_range("Vector: out-of-bounds."); }
+            return value[idx];
+        }
+
+        void operator+=(const Vector& rhs) {
+            if (size() != rhs.size()) { throw std::invalid_argument("vector add: size mismatch"); }
+
+            for (size_t i = 0; i < size(); ++i) {
+                value[i] += rhs[i];
+            }
+        }
+
+        friend Vector operator+(Vector lhs, const Vector& rhs) {
+            lhs += rhs;
+            return lhs;
+        }
+
+        void operator-=(const Vector& rhs) {
+            if (size() != rhs.size()) { throw std::invalid_argument("vector add: size mismatch"); }
+
+            for (size_t i = 0; i < size(); ++i) {
+                value[i] -= rhs[i];
+            }
+        }
+
+        friend Vector operator-(Vector lhs, const Vector& rhs) {
+            lhs -= rhs;
+            return lhs;
+        }
+
+        void operator*=(Number rhs) {
+            for (size_t i = 0; i < size(); ++i) {
+                value[i] *= rhs;
+            }
+        }
+
+        friend Vector operator*(Vector lhs, Number rhs) {
+            lhs *= rhs;
+            return lhs;
+        }
+        friend Vector operator*(Number lhs, Vector rhs) { return rhs * lhs; }
+    private:
+        std::vector<Number> value;
+    };
+
+    inline std::ostream& operator<<(std::ostream& os, const Vector& v) {
+        size_t min_w = 12;
+
+        os << "[";
+        for (size_t i = 0; i < v.size(); ++i) {
+            if (i > 0) { os << ","; }
+            os << v[i];
+        }
+        os << "]";
+        return os;
+    }
+
+    /// Simple CSC-format matrix class used during simplex method
     class Matrix {
     public:
         /// Creates the 0 x 0 matrix
-        Matrix() : n_rows(0), n_cols(0) {}
+        Matrix() : Matrix(0,0) {}
 
         /// Creates a m x n all-zeros matrix 
-        Matrix(size_t m, size_t n) : n_rows(m), n_cols(n) {}
+        Matrix(size_t m, size_t n) : n_rows(m), n_cols(n) {
+            for (size_t i = 0; i < n+1; ++i) {
+                col_index.push_back(0);
+            }
+        }
 
         /// Returns the n x n identity matrix
         static Matrix identity(size_t n) {
@@ -77,12 +185,16 @@ namespace lp {
             }
 
             Matrix aug(a.rows(), a.cols() + b.cols());
-            for (const auto e : a) {
-                aug(e.row, e.col) = e.value;
+            for (size_t c = 0; c < a.cols(); ++c) {
+                for (auto it = a.begin(c); it != a.end(c); ++it) {
+                    aug((*it).row, c) = (*it).value;
+                }
             }
-
-            for (const auto e : b) {
-                aug(e.row, e.col + a.cols()) = e.value;
+            
+            for (size_t c = 0; c < b.cols(); ++c) {
+                for (auto it = b.begin(c); it != b.end(c); ++it) {
+                    aug((*it).row, c + a.cols()) = (*it).value;
+                }
             }
 
             return aug;
@@ -90,13 +202,31 @@ namespace lp {
 
         /// Resizes the matrix. Any non-zero entries outside of the new dimensions are dropped.
         void resize(size_t r, size_t c) {
-            for (size_t i = 0; i < value.size(); ++i) {
-                if (row[i] >= r || col[i] >= c) {
-                    value.erase(value.begin() + i);
-                    col.erase(col.begin() + i);
-                    row.erase(row.begin() + i);
-                    i -= 1;
+            if (c < cols() || r < rows()) { // remake the matrix
+                std::vector<Number> new_v; 
+                std::vector<size_t> new_cols;
+                std::vector<size_t> new_rows;
+
+                for (size_t j = 0; j < c; ++j) {
+                    size_t vstart = col_index[j];
+                    size_t vend = col_index[j+1];
+                    new_cols.push_back(new_v.size());
+                    for (size_t i = vstart; i < vend; ++i) {
+                        if (row_index[i] < r) {
+                            new_v.push_back(value[i]);
+                            new_rows.push_back(row_index[i]);
+                        }
+                    }
                 }
+                new_cols.push_back(new_v.size());
+
+                value = new_v;
+                row_index = new_rows;
+                col_index = new_cols;
+            }
+
+            while (col_index.size() < c+1) {
+                col_index.push_back(value.size());
             }
         
             n_rows = r;
@@ -112,32 +242,41 @@ namespace lp {
         /// Checks if the matrix is square
         bool square() const { return rows() == cols(); }
 
+        /// Gets a single column as a vector
+        Vector column(size_t c) const {
+            if (c >= cols()) { throw std::out_of_range("column out-of-bounds."); }
+
+            Vector ret(rows());
+            size_t col_start = col_index[c];
+            size_t col_end = col_index[c+1];
+            for (size_t i = col_start; i < col_end; ++i) {
+                ret[row_index[i]] = value[i];
+            }
+            return ret;
+        }
+
         /// Returns a submatrix formed by a list of columns
         Matrix submatrix_cols(std::vector<size_t> subcols) const {
             Matrix ret(n_rows, subcols.size());
-            for (size_t i = 0; i < value.size(); ++i) {
-                for (size_t j = 0; j < subcols.size(); ++j) {
-                    if (subcols[j] == col[i]) {
-                        ret(row[i], j) = value[i];
-                    }
+            ret.col_index.clear();
+
+            for (size_t j = 0; j < subcols.size(); ++j) {
+                if (subcols[j] >= n_cols) { throw std::invalid_argument("column out-of-bounds."); }
+
+                size_t col_start = col_index[subcols[j]];
+                size_t col_end = col_index[subcols[j]+1];
+                ret.col_index.push_back(ret.value.size());
+                for (size_t i = col_start; i < col_end; ++i) {
+                    ret.value.push_back(value[i]); 
+                    ret.row_index.push_back(row_index[i]);
                 }
             }
+            ret.col_index.push_back(ret.value.size());
+
             return ret;
         }
 
-        /// Returns a submatrix formed by a list of rows
-        Matrix submatrix_rows(std::vector<size_t> subrows) const {
-            Matrix ret(subrows.size(), cols());
-            for (size_t i = 0; i < value.size(); ++i) {
-                for (size_t j = 0; j < subrows.size(); ++j) {
-                    if (subrows[j] == row[i]) {
-                        ret(j, col[i]) = value[i];
-                    }
-                }
-            }
-            return ret;
-        }
-
+        /// Computes the row-reduced Echelon form
         void rref() {
             size_t lead = 0; 
             for (size_t r = 0; r < rows(); ++r) {
@@ -202,40 +341,39 @@ namespace lp {
         /// Swaps rows r1 and r2
         void swap_rows(size_t r1, size_t r2) {
             for (size_t i = 0; i < value.size(); ++i) {
-                if (row[i] == r1) { row[i] = r2; }
-                else if (row[i] == r2) { row[i] = r1; }
+                if (row_index[i] == r1) { row_index[i] = r2; }
+                else if (row_index[i] == r2) { row_index[i] = r1; }
             }
         }
 
         /// Scales a row by `s`
         void scale_row(size_t r, Number s) {
             for (size_t i = 0; i < value.size(); ++i) {
-                if (row[i] == r) { value[i] *= s; } 
+                if (row_index[i] == r) { value[i] *= s; } 
             }
         }
 
         /// Performs basic ERO R1 <- R1 + s*R2
         void add_rows(size_t r1, size_t r2, Number s) {
-            for (size_t i = 0; i < value.size(); ++i) {
-                if (row[i] == r2) { 
-                    (*this)(r1, col[i]) += s * value[i];
-                } 
+            for (size_t c = 0; c < cols(); ++c) {
+                Number delta = (*this)(r2, c) * s;
+                (*this)(r1, c) += delta;
             }
         }
 
         struct Entry {
-            size_t row, col;
+            size_t row;
             Number& value;
         };
         struct ConstEntry {
-            size_t row, col;
+            size_t row;
             const Number& value;
         };
 
         class iterator {
         public:
             iterator(Matrix* m, size_t idx) : m(m), idx(idx) {}
-            Entry operator*() const { return {  m->row[idx], m->col[idx], m->value[idx] }; }
+            Entry operator*() const { return {  m->row_index[idx], m->value[idx] }; }
             iterator& operator++() { ++idx; return *this; }
             bool operator!=(const iterator& other) const { return idx != other.idx; }
         private:
@@ -246,7 +384,7 @@ namespace lp {
         class const_iterator {
         public:
             const_iterator(const Matrix* m, size_t idx) : m(m), idx(idx) {}
-            ConstEntry operator*() const { return { m->row[idx], m->col[idx], m->value[idx] }; }
+            ConstEntry operator*() const { return {  m->row_index[idx], m->value[idx] }; }
             const_iterator& operator++() { ++idx; return *this; }
             bool operator!=(const const_iterator& other) const { return idx != other.idx; }
         private:
@@ -254,10 +392,22 @@ namespace lp {
             size_t idx;
         };
 
-        iterator begin() { return iterator(this, 0); }
-        const_iterator begin() const { return const_iterator(this, 0); }
-        iterator end() { return iterator(this, value.size()); }
-        const_iterator end() const { return const_iterator(this, value.size()); }
+        iterator begin(size_t c) { 
+            if (c >= cols()) { throw std::invalid_argument("column out-of-bounds"); }
+            return iterator(this, col_index[c]); 
+        }
+        const_iterator begin(size_t c) const { 
+            if (c >= cols()) { throw std::invalid_argument("column out-of-bounds"); }
+            return const_iterator(this, col_index[c]); 
+        }
+        iterator end(size_t c) { 
+            if (c >= cols()) { throw std::invalid_argument("column out-of-bounds"); }
+            return iterator(this, col_index[c+1]); 
+        }
+        const_iterator end(size_t c) const { 
+            if (c >= cols()) { throw std::invalid_argument("column out-of-bounds"); }
+            return const_iterator(this, col_index[c+1]); 
+        }
 
         /// Access the entry at (r,c)
         Number operator()(std::size_t r, std::size_t c) const {
@@ -265,8 +415,10 @@ namespace lp {
                 throw std::invalid_argument("index out-of-bounds");
             }
             
-            for (size_t i = 0; i < value.size(); ++i) {
-                if (row[i] == r && col[i] == c) {
+            size_t col_start = col_index[c];
+            size_t col_end = col_index[c+1];
+            for (size_t i = col_start; i < col_end; ++i) {
+                if (row_index[i] == r) {
                     return value[i];
                 }
             }
@@ -279,44 +431,41 @@ namespace lp {
                 throw std::invalid_argument("index out-of-bounds");
             }
 
-            for (size_t i = 0; i < value.size(); ++i) {
-                if (row[i] == r && col[i] == c) {
+            size_t col_start = col_index[c];
+            size_t col_end = col_index[c+1];
+            for (size_t i = col_start; i < col_end; ++i) {
+                if (row_index[i] == r) {
                     return value[i];
                 }
             }
 
             // Insert new entry
-            row.push_back(r);
-            col.push_back(c);
-            value.push_back(0);
-            return value.back();
+            size_t new_idx = col_end;
+            value.insert(value.begin() + new_idx, 0); 
+            row_index.insert(row_index.begin() + new_idx, r);
+
+            for (size_t i = c+1; i < cols() + 1; ++i) {
+                col_index[i] += 1;
+            }
+            return value[new_idx];
         }
 
-        /// Matrix multiplication
-        Matrix operator*(const Matrix& rhs) const {
-            if (cols() != rhs.rows()) {
+        /// Matrix*Vector multiplication
+        Vector operator*(const Vector& rhs) const {
+            if (cols() != rhs.size()) {
                 throw std::invalid_argument("multiply: dimension mismatch");
             }
 
-            Matrix C(rows(), rhs.cols());            
-
-            // Group rhs by rows
-            std::vector<std::vector<size_t>> brow(rhs.rows());
-            for (size_t k = 0; k < rhs.value.size(); ++k) {
-                brow[rhs.row[k]].push_back(k);
-            }
-
-            for (size_t a = 0; a < value.size(); ++a) {
-                size_t r = row[a];
-                size_t k = col[a];
-
-                for (size_t b : brow[k]) {
-                    size_t j = rhs.col[b];
-                    C(r, j) += value[a] * rhs.value[b];
+            Vector ret(rows());
+            for (size_t j = 0; j < cols(); ++j) {
+                Number xj = rhs[j];
+                if (std::abs(xj) < Eps) { continue; }
+                for (size_t k = col_index[j]; k < col_index[j+1]; ++k) {
+                    ret[row_index[k]] += value[k] * xj;
                 }
             }
 
-            return C;
+            return ret;
         }
 
         void operator+=(const Matrix& rhs) {
@@ -324,10 +473,16 @@ namespace lp {
                 throw std::invalid_argument("add: dimension mismatch");
             }
 
-            // Group rhs by rows
-            for (const auto& e : rhs) {
-                (*this)(e.row, e.col) += e.value; 
+            for (size_t c = 0; c < rhs.cols(); ++c) {
+                for (auto it = rhs.begin(c); it != rhs.end(c); ++it) {
+                    (*this)((*it).row, c) += (*it).value;
+                }
             }
+        }
+
+        friend Matrix operator+(Matrix lhs, const Matrix& rhs) {
+            lhs += rhs;
+            return lhs;
         }
 
         void operator-=(const Matrix& rhs) {
@@ -335,24 +490,34 @@ namespace lp {
                 throw std::invalid_argument("subtract: dimension mismatch");
             }
 
-            // Group rhs by rows
-            for (const auto& e : rhs) {
-                (*this)(e.row, e.col) -= e.value; 
+            for (size_t c = 0; c < rhs.cols(); ++c) {
+                for (auto it = rhs.begin(c); it != rhs.end(c); ++it) {
+                    (*this)((*it).row, c) -= (*it).value;
+                }
             }
         }
 
-        Matrix operator*(const Number& rhs) const {
-            Matrix C(*this);
-            for (size_t i = 0; i < C.value.size(); ++i) {
-                C.value[i] *= rhs;
-            }
-            return C;
+        friend Matrix operator-(Matrix lhs, const Matrix& rhs) {
+            lhs -= rhs;
+            return lhs;
         }
+
+        void operator*=(const Number& rhs) {
+            for (size_t i = 0; i < value.size(); ++i) {
+                value[i] *= rhs;
+            }
+        }
+
+        friend Matrix operator*(Matrix lhs, const Number& rhs) {
+            lhs *= rhs;
+            return lhs;
+        }
+        friend Matrix operator*(Number& lhs, Matrix rhs) { return rhs * lhs; }
     private:
         std::size_t n_rows, n_cols;
         std::vector<Number> value;
-        std::vector<size_t> col;
-        std::vector<size_t> row;
+        std::vector<size_t> col_index;
+        std::vector<size_t> row_index;
     };
 
     inline Matrix operator*(const Number& lhs, const Matrix& rhs) {
@@ -393,13 +558,13 @@ namespace lp {
     class Solver {
     public:
         struct Solution {
-            std::vector<Number> x;
+            Vector x;
             Number z;
             SolutionStatus status;
         };
 
         virtual ~Solver() {}
-        virtual Solution solve(Matrix A, Matrix b, Matrix c) = 0;
+        virtual Solution solve(Matrix A, Vector b, Vector c) = 0;
     };
 
     /// Performs revised simplex method to solve the LP.
@@ -407,11 +572,11 @@ namespace lp {
     public:
         DefaultSolver() {} 
 
-        Solution solve(Matrix _A, Matrix _b, Matrix _c) {
+        Solution solve(Matrix _A, Vector _b, Vector _c) {
             A = std::move(_A);
             b = std::move(_b);
             c = _c;
-            x = Matrix(A.cols(), 1);
+            x = Vector(A.cols());
             original_num_cols = A.cols();
 
             status = SolutionStatus::kFeasible;
@@ -425,16 +590,13 @@ namespace lp {
             }
 
             if (cur_phase == 1) {
-                Number z = 0;
-                for (size_t i = 0; i < cP.cols(); ++i) {
-                    z += cP(0, i) * x(i, 0);
-                }
-                if (z > Eps) {
+                Number z = c.dot(x);
+                if (std::abs(z) > Eps) {
 #ifdef LP_H_DEBUG
                 std::cout << "Auxiliary LP solved. Problem is infeasible (z*=" << z << ")." << std::endl;
 #endif
-                    std::vector<Number> x_soln(original_num_cols);
-                    for (const auto& e: x) { x_soln[e.row] = e.value; }
+                    Vector x_soln(original_num_cols);
+                    for (size_t i = 0; i < original_num_cols; ++i) { x_soln[i] = x[i]; }
                     return Solution { x_soln, z, SolutionStatus::kInfeasible };
                 }
 #ifdef LP_H_DEBUG
@@ -446,7 +608,7 @@ namespace lp {
                 A.resize(A.rows(), original_num_cols);
                 c = _c;
                 cP = c;
-                x.resize(original_num_cols, 1);
+                x.resize(original_num_cols);
 
                 // Remove auxiliary variables from bv & nbv
                 for (size_t i = 0; i < bv.size(); ++i) {
@@ -471,33 +633,26 @@ namespace lp {
             }
 
             // Check feasibility
-            Number z = 0;
-            for (size_t i = 0; i < cP.cols(); ++i) {
-                z += cP(0, i) * x(i, 0);
-            }
+            Number z = cP.dot(x);
             if (z > Eps) { status = SolutionStatus::kInfeasible; }
 
             // Create the solution
             z = obj_value();
-            std::vector<Number> x_soln(original_num_cols);
-            for (const auto& e: x) { x_soln[e.row] = e.value; }
 
+            Vector x_soln(original_num_cols);
+            for (size_t i = 0; i < original_num_cols; ++i) { x_soln[i] = x[i]; }
             return Solution { x_soln, z, status };
         }
     protected:
         Number obj_value() const {
-            Number obj = 0;
-            for (size_t i = 0; i < c.cols(); ++i) {
-                obj += c(0, i) * x(i, 0);
-            }
-            return obj;
+            return c.dot(x);
         }
 
         virtual void start() {
 #ifdef LP_H_DEBUG
-            std::cout << "c = " << std::endl << c;
+            std::cout << "c = " << c << std::endl;
             std::cout << "A = " << std::endl << A;
-            std::cout << "b = " << std::endl << b;
+            std::cout << "b = " << b << std::endl;
 #endif
             std::vector<bool> identity_cols(A.rows(), false);
 
@@ -506,13 +661,13 @@ namespace lp {
                 double nonzero_entry = 0;
                 size_t num_zeros = 0;
                 size_t nonzero_row = 0;
-                for (size_t j = 0; j < A.rows(); ++j) {
-                    if (std::abs(A(j,i)) < Eps) { 
+                for (auto it = A.begin(i); it != A.end(i); ++it) {
+                    if (std::abs((*it).value) < Eps) { 
                         num_zeros += 1;
                     }
                     else { 
-                        nonzero_entry = A(j,i); 
-                        nonzero_row = j;
+                        nonzero_entry = (*it).value; 
+                        nonzero_row = (*it).row;
                     }
                 }
 
@@ -535,20 +690,20 @@ namespace lp {
                 std::cout << "No identity matrix found, adding artificial variables." << std::endl;
 #endif
                 A.resize(A.rows(), A.cols() + A.rows());
-                c = Matrix(1, c.cols() + A.rows());
-                x.resize(c.cols() + A.rows(), 1);
+                x.resize(c.size() + A.rows());
+                c = Vector(c.size() + A.rows());
                 for (size_t i = 0; i < A.rows(); ++i) {
                     bv.push_back(original_num_cols + i);
                     A(i, original_num_cols + i) = 1;
-                    c(0, original_num_cols + i) = 1;
+                    c[original_num_cols + i] = 1;
                 }
 
                 for (size_t i = 0; i < original_num_cols; ++i) { nbv.push_back(i); }
 #ifdef LP_H_DEBUG
                 std::cout << "New problem:" << std::endl;
-                std::cout << "c = " << std::endl << c;
+                std::cout << "c = " << c << std::endl;
                 std::cout << "A = " << std::endl << A;
-                std::cout << "b = " << std::endl << b;
+                std::cout << "b = " << b << std::endl;
 #endif
             }
             else {
@@ -559,8 +714,8 @@ namespace lp {
             Binv = A.submatrix_cols(bv);
 
             // Determine initial bfs
-            for (const auto & e : b) {
-                x(bv[e.row],0) = e.value;
+            for (size_t i = 0; i < b.size(); ++i) {
+                x[bv[i]] = b[i];
             }
         }
 
@@ -579,37 +734,32 @@ namespace lp {
                 if (i > 0) { std::cout << ","; }
                 std::cout << nbv[i];
             }
-            std::cout << "]" << std::endl << "x = <";
-            for (size_t i = 0; i < x.rows(); ++i) { 
-                if (i > 0) { std::cout << ","; }
-                std::cout << x(i,0);
-            }
-            std::cout << ">" << std::endl << "c = <";
-            for (size_t i = 0; i < cP.cols(); ++i) { 
-                if (i > 0) { std::cout << ","; }
-                std::cout << cP(0,i);
-            }
-            std::cout << ">" << std::endl << "Binv = " << std::endl << Binv;
+            std::cout << "]" << std::endl << "x = " << x;
+            std::cout << std::endl << "c = " << cP;
+            std::cout << std::endl << "Binv = " << std::endl << Binv;
 #endif
 
             // Find the new objective vector
-            Matrix cB = cP.submatrix_cols(bv);
+            Vector cB = cP.subvector(bv);
 
-            cP -= cB * Binv * A;
-            Matrix cN = cP.submatrix_cols(nbv);
+            for (size_t j = 0; j < cP.size(); ++j) {
+                Vector rhs = Binv * A.column(j);
+                cP[j] -= cB.dot(rhs);
+            }
+            Vector cN = cP.subvector(nbv);
 
 #ifdef LP_H_DEBUG
-            std::cout << std::endl << "c' = " << cP;
+            std::cout << "c' = " << cP << std::endl;
 #endif
 
             // Check if optimal
             size_t entering_var = 0;
             Number most_negative = 0;
-            for (const auto& e : cN) { 
-                if (e.value < -Eps) { 
-                    if (e.value < most_negative) {
-                        entering_var = nbv[e.col];
-                        most_negative = e.value;
+            for (size_t i = 0; i < cN.size(); ++i) {
+                if (cN[i] < -Eps) { 
+                    if (cN[i] < most_negative) {
+                        entering_var = nbv[i];
+                        most_negative = cN[i];
                     }
                 }
             }
@@ -624,38 +774,38 @@ namespace lp {
 #endif
 
             // Compute feasible direction vector and check if unbounded.
-            Matrix d(x.rows(), 1);
-            Matrix dB = Binv * A.submatrix_cols({ entering_var }) * -1.0;
+            Vector d(x.size());
+            Vector dB = -1.0 * Binv * A.column(entering_var);
             bool unbounded = true;
-            for (const auto& e : dB) {
-                if (e.value < -Eps) { unbounded = false; }
-                d(bv[e.row], 0) = e.value;
+            for (size_t i = 0; i < dB.size(); ++i) {
+                if (dB[i] < -Eps) { unbounded = false; }
+                d[bv[i]] = dB[i];
             }
 
             if (unbounded) {
                 status = SolutionStatus::kUnbounded;
                 return;
             }
-            d(entering_var, 0) = 1;
+            d[entering_var] = 1;
 
 #ifdef LP_H_DEBUG
-            std::cout << "d = " << std::endl << d;
+            std::cout << "d = " << d << std::endl;
 #endif
 
             // Perform minimum-ratio test to find leaving variable
             size_t leaving_var = 0;
             Number theta = 0;
-            for (const auto& e : dB) {
-                if (e.value > -Eps) { continue; }
-                Number r = -x(bv[e.row], 0) / e.value;
+            for (size_t i = 0; i < dB.size(); ++i) {
+                if (dB[i] > -Eps) { continue; }
+                Number r = -x[bv[i]] / dB[i];
 
 #ifdef LP_H_DEBUG
-                std::cout << "i=" << bv[e.row] <<": " << -x(bv[e.row],0) << "/" << e.value << "=" << r << std::endl;
+                std::cout << "i=" << bv[i] <<": " << -x[bv[i]] << "/" << dB[i] << "=" << r << std::endl;
 #endif
 
                 if (r < theta || theta == 0) {
                     theta = r;
-                    leaving_var = e.row;
+                    leaving_var = i;
                 }
             }
 
@@ -668,17 +818,11 @@ namespace lp {
             x += theta * d;
 
             // Update Binv using EROs
-            Matrix aug = Matrix::augment(Binv, dB * -1);
-            
-            aug.scale_row(leaving_var, -1/dB(leaving_var, 0));
-            for (size_t r = 0; r < aug.rows(); ++r) {
+            Binv.scale_row(leaving_var, -1/dB[leaving_var]);
+            for (size_t r = 0; r < Binv.rows(); ++r) {
                 if (r == leaving_var) { continue; } 
-                aug.add_rows(r, leaving_var, dB(r, 0));
+                Binv.add_rows(r, leaving_var, dB[r]);
             }
-
-            std::vector<size_t> subcols;
-            for (size_t i = 0; i < aug.cols() - 1; ++i) { subcols.push_back(i); }
-            Binv = aug.submatrix_cols(subcols);
 
             // Finally update bv and nbv
             size_t leaving_var_actual = bv[leaving_var];
@@ -690,10 +834,10 @@ namespace lp {
 
     protected:
         Matrix A;
-        Matrix b;
-        Matrix c;
-        Matrix cP;
-        Matrix x;
+        Vector b;
+        Vector c;
+        Vector cP;
+        Vector x;
         size_t iter_num;
         std::vector<size_t> bv;
         std::vector<size_t> nbv;
@@ -924,8 +1068,8 @@ namespace lp {
             Base(bool additional_var) : additional_var(additional_var) {}
             virtual ~Base() {}
             virtual void apply_matrix(Matrix&) {}
-            virtual void apply_rhs(Matrix&) {}
-            virtual void apply_obj(Matrix&) {}
+            virtual void apply_rhs(Vector&) {}
+            virtual void apply_obj(Vector&) {}
             virtual void apply_soln(Solver::Solution&) {}
             virtual bool adds_var() { return additional_var; }
         protected:
@@ -941,8 +1085,8 @@ namespace lp {
                 }
             }
     
-            void apply_obj(Matrix& c) override {
-                c(0, id) *= -1;             
+            void apply_obj(Vector& c) override {
+                c[id] *= -1;             
             }
 
             void apply_soln(Solver::Solution& s) override {
@@ -959,8 +1103,8 @@ namespace lp {
                 A.scale_row(row, -1);
             }
             
-            void apply_rhs(Matrix& b) override {
-                b(row, 0) *= -1;  
+            void apply_rhs(Vector& b) override {
+                b[row] *= -1;  
             }
         private:
             size_t row;
@@ -976,8 +1120,8 @@ namespace lp {
                 A(constraint_id, slack_var) = type == ConstraintType::LEq ? 1 : -1;
             };
 
-            void apply_rhs(Matrix& b) override {
-                b(constraint_id, 0) = bound;
+            void apply_rhs(Vector& b) override {
+                b[constraint_id] = bound;
             };
         private:
             size_t constraint_id;
@@ -1011,10 +1155,10 @@ namespace lp {
                 }
             }
 
-            void apply_obj(Matrix& c) override {
-                Number v = c(0, vplus);
+            void apply_obj(Vector& c) override {
+                Number v = c[vplus];
                 if (std::abs(v) > Eps) {
-                    c(0, vneg) = -v;
+                    c[vneg] = -v;
                 }
             }
 
@@ -1138,21 +1282,21 @@ namespace lp {
             // Build the matrix form
             // ---------------------
             Matrix A(constraints.size() + num_extra_constraints, variables.size() + num_extra_vars);
-            Matrix b(constraints.size() + num_extra_constraints, 1);
+            Vector b(constraints.size() + num_extra_constraints);
             for (size_t i = 0; i < constraints.size(); ++i) {
                 for (const auto& v : constraints[i].lhs.terms) {
                     if (v.first == 0) { continue; }
                     A(i, v.second->id) = v.first;
                 }
 
-                b(i,0) = constraints[i].rhs;
+                b[i] = constraints[i].rhs;
             }
 
             
-            Matrix c(1, variables.size() + num_extra_vars);
+            Vector c(variables.size() + num_extra_vars);
             for (const auto& v: objective_.terms) {
                 if (v.first == 0) { continue; }
-                c(0, v.second->id) = (type == ProblemType::Max) ? -v.first :  v.first;
+                c[v.second->id] = (type == ProblemType::Max) ? -v.first :  v.first;
             }
 
             // Apply transformations
