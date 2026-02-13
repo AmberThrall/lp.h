@@ -27,6 +27,7 @@
 
 #pragma once
 
+#include <cstddef>
 #define LP_H_VERSION_MAJOR "0"
 #define LP_H_VERSION_MINOR "1"
 #define LP_H_VERSION_PATCH "0"
@@ -663,7 +664,8 @@ namespace lp {
             std::cout << "A = " << std::endl << A;
             std::cout << "b = " << b << std::endl;
 #endif
-            std::vector<bool> identity_cols(A.rows(), false);
+            std::vector<size_t> identity_cols(A.rows(), false);
+            std::vector<bool> is_identity_cols(A.rows(), false);
 
             // Quickly check if the identity matrix is a submatrix, if so, set those columns as bv
             for (size_t i = 0; i < A.cols(); ++i) {
@@ -679,19 +681,14 @@ namespace lp {
                 }
 
                 if (num_zeros == A.rows()-1 && std::abs(nonzero_entry-1) < Eps && bv.size() < A.rows()) {
-                    identity_cols[nonzero_row] = true;
-                    bv.push_back(i);
-                }
-                else {
-                    nbv.push_back(i);
+                    is_identity_cols[nonzero_row] = true;
+                    identity_cols[nonzero_row] = i;
                 }
             }
 
             // Add artificial variables
-            if (bv.size() != A.rows() || std::find(identity_cols.begin(), identity_cols.end(), false) != identity_cols.end()) {
+            if (std::find(is_identity_cols.begin(), is_identity_cols.end(), false) != is_identity_cols.end()) {
                 cur_phase = 1;
-                bv.clear();
-                nbv.clear();
                 
 #ifdef LP_H_DEBUG
                 std::cout << "No identity matrix found, adding artificial variables." << std::endl;
@@ -714,6 +711,14 @@ namespace lp {
 #endif
             }
             else {
+                for (size_t i = 0; i < A.rows(); ++i) {
+                    bv.push_back(identity_cols[i]);
+                }
+                for (size_t i = 0; i < A.rows(); ++i) {
+                    if (std::find(bv.begin(), bv.end(), i) == bv.end()) {
+                        nbv.push_back(i);
+                    }
+                }
                 cur_phase = 2;
             }
 
