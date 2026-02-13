@@ -646,7 +646,7 @@ namespace lp {
             }
 
             // Create the solution
-            z = obj_value();
+            Number z = obj_value();
 
             Vector x_soln(original_num_cols);
             for (size_t i = 0; i < original_num_cols; ++i) { x_soln[i] = x[i]; }
