@@ -585,7 +585,6 @@ namespace lp {
             b = std::move(_b);
             c = _c;
             x = Vector(A.cols());
-            original_num_cols = A.cols();
 
             status = SolutionStatus::kFeasible;
             iter_num = 0;
@@ -693,6 +692,7 @@ namespace lp {
 #ifdef LP_H_DEBUG
                 std::cout << "No identity matrix found, adding artificial variables." << std::endl;
 #endif
+                original_num_cols = A.cols();
                 A.resize(A.rows(), A.cols() + A.rows());
                 x.resize(c.size() + A.rows());
                 c = Vector(c.size() + A.rows());
@@ -1036,15 +1036,15 @@ namespace lp {
         Constraint c { std::move(lhs), rhs, ConstraintType::GEq };
         return c;
     }
-    inline Constraint operator==(Variable lhs, Number rhs) {
+    inline Constraint operator==(Variable& lhs, Number rhs) {
         Constraint c { 1*lhs, rhs, ConstraintType::Eq };
         return c;
     }
-    inline Constraint operator<=(Variable lhs, Number rhs) {
+    inline Constraint operator<=(Variable& lhs, Number rhs) {
         Constraint c { 1*lhs, rhs, ConstraintType::LEq };
         return c;
     }
-    inline Constraint operator>=(Variable lhs, Number rhs) {
+    inline Constraint operator>=(Variable& lhs, Number rhs) {
         Constraint c { 1*lhs, rhs, ConstraintType::GEq };
         return c;
     }
