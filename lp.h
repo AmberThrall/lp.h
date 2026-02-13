@@ -952,6 +952,20 @@ namespace lp {
             size_t id;
         };
 
+        class NegateRow : public Base {
+        public:
+            NegateRow(size_t row) : Base(false), row(row) {}
+            void apply_matrix(Matrix& A) override {
+                A.scale_row(row, -1);
+            }
+            
+            void apply_rhs(Matrix& b) override {
+                b(row, 0) *= -1;  
+            }
+        private:
+            size_t row;
+        };
+
         class VariableBound : public Base {
         public:
             VariableBound(size_t constraint_id, size_t var_id, size_t slack_var, ConstraintType type, Number bound) : Base(true), 
@@ -1112,8 +1126,17 @@ namespace lp {
                     }
                 }
             }
+
+            // 3. Ensure b is positive
+            for (size_t i = 0; i < constraints.size(); ++i) {
+                if (constraints[i].rhs < -Eps) {
+                    transformations.push_back(new transformations::NegateRow(i));
+                }
+            }
             
+            // ---------------------
             // Build the matrix form
+            // ---------------------
             Matrix A(constraints.size() + num_extra_constraints, variables.size() + num_extra_vars);
             Matrix b(constraints.size() + num_extra_constraints, 1);
             for (size_t i = 0; i < constraints.size(); ++i) {
@@ -1132,13 +1155,16 @@ namespace lp {
                 c(0, v.second->id) = (type == ProblemType::Max) ? -v.first :  v.first;
             }
 
+            // Apply transformations
             for (auto& t : transformations) {
                 t->apply_matrix(A);
                 t->apply_rhs(b);
                 t->apply_obj(c);
             }
 
+            // -----
             // Solve
+            // -----
             Solver::Solution s = solver->solve(std::move(A), std::move(b), std::move(c));
 
             for (auto& t : transformations) {

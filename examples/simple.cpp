@@ -31,7 +31,7 @@ int main() {
     x = problem2.add_var(0, lp::Infinity, "x");
     y = problem2.add_var(-lp::Infinity, 0, "y");
     problem2.objective(40*x - 30*y);
-    problem2.constraint(x - y <= 12);
+    problem2.constraint(-x + y >= -12);
     problem2.constraint(2*x - y <= 16);
 
     std::cout << "Problem: " << std::endl << problem2;
