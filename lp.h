@@ -355,9 +355,16 @@ namespace lp {
 
         /// Performs basic ERO R1 <- R1 + s*R2
         void add_rows(size_t r1, size_t r2, Number s) {
-            for (size_t c = 0; c < cols(); ++c) {
-                Number delta = (*this)(r2, c) * s;
-                (*this)(r1, c) += delta;
+            std::vector<Number> r2_vals(cols());
+            size_t c = 0;
+            for (size_t i = 0; i < value.size(); ++i) {
+                if (i == col_index[c+1]) { c += 1; }
+                if (row_index[i] == r2) { r2_vals[c] = value[i]; }
+            }
+
+            for (size_t i = 0; i < cols(); ++i) {
+                if (std::abs(r2_vals[i]) < Eps) continue;
+                (*this)(r1, i) += s * r2_vals[i];
             }
         }
 
