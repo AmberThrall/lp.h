@@ -820,30 +820,36 @@ namespace lp {
 #endif
 
             // Perform minimum-ratio test to find leaving variable
-            size_t leaving_var = 0;
-            Number theta = 0;
+            size_t leaving_var = std::numeric_limits<size_t>::max();
+            Number theta = Infinity;
             for (size_t i = 0; i < dB.size(); ++i) {
-                if (dB[i] > -Eps) { continue; }
+                if (dB[i] >= -Eps) { continue; }
                 Number r = -x[bv[i]] / dB[i];
 
 #ifdef LP_H_DEBUG
                 std::cout << "i=" << bv[i] <<": " << -x[bv[i]] << "/" << dB[i] << "=" << r << std::endl;
 #endif
 
-                Number delta = r - theta;
-                if (delta < -Eps || theta == 0 || (std::abs(delta) < Eps && bv[i] < bv[leaving_var])) {
+                if (r < theta - Eps || (std::abs(r - theta) < Eps && bv[i] < bv[leaving_var])) {
                     theta = r;
                     leaving_var = i;
                 }
             }
 
+            if (leaving_var == std::numeric_limits<size_t>::max()) {
+                status = SolutionStatus::kUnbounded;
+                return;
+            }
 #ifdef LP_H_DEBUG
             std::cout << "leaving_var = " << bv[leaving_var] << std::endl;
             std::cout << "theta = " << theta << std::endl;
 #endif
 
+            if (theta < -Eps) { throw std::logic_error("negative theta detected."); }
+
             // Compute the new bfs
             x += theta * d;
+            x[bv[leaving_var]] = 0;
 
             // Update Binv using EROs
             Binv.scale_row(leaving_var, -1/dB[leaving_var]);
