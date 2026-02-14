@@ -146,8 +146,6 @@ namespace lp {
     };
 
     inline std::ostream& operator<<(std::ostream& os, const Vector& v) {
-        size_t min_w = 12;
-
         os << "[";
         for (size_t i = 0; i < v.size(); ++i) {
             if (i > 0) { os << ","; }
@@ -476,6 +474,23 @@ namespace lp {
             return ret;
         }
 
+        /// Compute y=x^TA
+        friend Vector operator*(const Vector& lhs, const Matrix& rhs) {
+            if (rhs.rows() != lhs.size()) {
+                throw std::invalid_argument("multiply: dimension mismatch");
+            }
+
+            Vector ret(rhs.cols());
+
+            for (size_t j = 0; j < rhs.cols(); ++j) {
+                for (size_t k = rhs.col_index[j]; k < rhs.col_index[j+1]; ++k) {
+                    ret[j] += rhs.value[k] * lhs[rhs.row_index[k]];
+                }
+            }
+
+            return ret;
+        }
+
         void operator+=(const Matrix& rhs) {
             if (cols() != rhs.cols() || rows() != rhs.rows()) {
                 throw std::invalid_argument("add: dimension mismatch");
@@ -586,10 +601,10 @@ namespace lp {
             c = _c;
             x = Vector(A.cols());
 
+            original_num_cols = A.cols();
             status = SolutionStatus::kFeasible;
             iter_num = 0;
             start();
-            cP = c;
 
             while (status == SolutionStatus::kFeasible) {
                 iter_num += 1;
@@ -614,7 +629,6 @@ namespace lp {
 
                 A.resize(A.rows(), original_num_cols);
                 c = _c;
-                cP = c;
                 x.resize(original_num_cols);
 
                 // Remove auxiliary variables from bv & nbv
@@ -639,14 +653,12 @@ namespace lp {
                 }
             }
 
-            // Check feasibility
-            if (status == SolutionStatus::kOptimal) {
-                Number z = cP.dot(x);
-                if (z > Eps) { status = SolutionStatus::kInfeasible; }
-            }
-
             // Create the solution
             Number z = obj_value();
+
+#ifdef LP_H_DEBUG
+            std::cout << "Final LP solved. Problem is " << status << " (z*=" << z << ")" << std::endl;
+#endif
 
             Vector x_soln(original_num_cols);
             for (size_t i = 0; i < original_num_cols; ++i) { x_soln[i] = x[i]; }
@@ -667,21 +679,23 @@ namespace lp {
             std::vector<bool> is_identity_cols(A.rows(), false);
 
             // Quickly check if the identity matrix is a submatrix, if so, set those columns as bv
-            for (size_t i = 0; i < A.cols(); ++i) {
-                Number nonzero_entry = 0;
-                size_t num_zeros = A.rows();
-                size_t nonzero_row = 0;
-                for (auto it = A.begin(i); it != A.end(i); ++it) {
-                    if (std::abs((*it).value) > Eps) { 
-                        num_zeros -= 1;
-                        nonzero_entry = (*it).value; 
-                        nonzero_row = (*it).row;
+            if (A.rows() > 1) {
+                for (size_t i = 0; i < A.cols(); ++i) {
+                    Number nonzero_entry = 0;
+                    size_t num_zeros = A.rows();
+                    size_t nonzero_row = 0;
+                    for (auto it = A.begin(i); it != A.end(i); ++it) {
+                        if (std::abs((*it).value) > Eps) { 
+                            num_zeros -= 1;
+                            nonzero_entry = (*it).value; 
+                            nonzero_row = (*it).row;
+                        }
                     }
-                }
 
-                if (num_zeros == A.rows()-1 && std::abs(nonzero_entry-1) < Eps && bv.size() < A.rows()) {
-                    is_identity_cols[nonzero_row] = true;
-                    identity_cols[nonzero_row] = i;
+                    if (num_zeros == A.rows()-1 && std::abs(nonzero_entry-1) < Eps && bv.size() < A.rows()) {
+                        is_identity_cols[nonzero_row] = true;
+                        identity_cols[nonzero_row] = i;
+                    }
                 }
             }
 
@@ -692,7 +706,6 @@ namespace lp {
 #ifdef LP_H_DEBUG
                 std::cout << "No identity matrix found, adding artificial variables." << std::endl;
 #endif
-                original_num_cols = A.cols();
                 A.resize(A.rows(), A.cols() + A.rows());
                 x.resize(c.size() + A.rows());
                 c = Vector(c.size() + A.rows());
@@ -747,21 +760,23 @@ namespace lp {
                 std::cout << nbv[i];
             }
             std::cout << "]" << std::endl << "x = " << x;
-            std::cout << std::endl << "c = " << cP;
             std::cout << std::endl << "Binv = " << std::endl << Binv;
 #endif
 
             // Find the new objective vector
-            Vector cB = cP.subvector(bv);
+            Vector cB = c.subvector(bv);
+            Vector cN = c.subvector(nbv);
+            Vector y = cB * Binv;
+#ifdef LP_H_DEBUG
+            std::cout << "y=" << y << std::endl;
+#endif
 
-            for (size_t j = 0; j < cP.size(); ++j) {
-                Vector rhs = Binv * A.column(j);
-                cP[j] -= cB.dot(rhs);
+            for (size_t j = 0; j < nbv.size(); ++j) {
+                cN[j] = c[nbv[j]] - y.dot(A.column(nbv[j]));
             }
-            Vector cN = cP.subvector(nbv);
 
 #ifdef LP_H_DEBUG
-            std::cout << "c' = " << cP << std::endl;
+            std::cout << "cN' = " << cN << std::endl;
 #endif
 
             // Check if optimal
@@ -815,7 +830,8 @@ namespace lp {
                 std::cout << "i=" << bv[i] <<": " << -x[bv[i]] << "/" << dB[i] << "=" << r << std::endl;
 #endif
 
-                if (r < theta || theta == 0) {
+                Number delta = r - theta;
+                if (delta < -Eps || theta == 0 || (std::abs(delta) < Eps && bv[i] < bv[leaving_var])) {
                     theta = r;
                     leaving_var = i;
                 }
@@ -848,7 +864,6 @@ namespace lp {
         Matrix A;
         Vector b;
         Vector c;
-        Vector cP;
         Vector x;
         size_t iter_num;
         std::vector<size_t> bv;
@@ -950,12 +965,12 @@ namespace lp {
         }
         
         Expression operator-() { return (*this) * Number(-1); }
-        friend Expression operator+(Variable& lhs, Expression& rhs) { return rhs + lhs; }
+        friend Expression operator+(Variable& lhs, Expression rhs) { return rhs + lhs; }
         friend Expression operator+(Expression lhs, Variable& rhs) {
             lhs += rhs;
             return lhs;
         }
-        friend Expression operator-(Variable& lhs, Expression& rhs) { return rhs - lhs; }
+        friend Expression operator-(Variable& lhs, Expression rhs) { return rhs - lhs; }
         friend Expression operator-(Expression lhs, Variable& rhs) {
             lhs -= rhs;
             return lhs;
