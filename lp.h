@@ -354,7 +354,7 @@ namespace lp {
 
         /// Performs basic ERO R1 <- R1 + s*R2
         void add_rows(size_t r1, size_t r2, Number s) {
-            std::vector<Number> r2_vals(cols());
+            /*std::vector<Number> r2_vals(cols());
             size_t c = 0;
             for (size_t i = 0; i < value.size(); ++i) {
                 if (i == col_index[c+1]) { c += 1; }
@@ -364,6 +364,13 @@ namespace lp {
             for (size_t i = 0; i < cols(); ++i) {
                 if (std::abs(r2_vals[i]) < Eps) continue;
                 (*this)(r1, i) += s * r2_vals[i];
+            }*/
+            for (size_t j = 0; j < cols(); ++j) {
+                for (size_t i = col_index[j]; i < col_index[j+1]; ++i) {
+                    if (row_index[i] == r2) {
+                        (*this)(r1, j) += s * value[i]; 
+                    }
+                }
             }
         }
 
@@ -765,28 +772,28 @@ namespace lp {
 
             // Find the new objective vector
             Vector cB = c.subvector(bv);
-            Vector cN = c.subvector(nbv);
+            Vector cP = Vector(nbv.size());
             Vector y = cB * Binv;
 #ifdef LP_H_DEBUG
             std::cout << "y=" << y << std::endl;
 #endif
 
             for (size_t j = 0; j < nbv.size(); ++j) {
-                cN[j] = c[nbv[j]] - y.dot(A.column(nbv[j]));
+                cP[j] = c[nbv[j]] - y.dot(A.column(nbv[j]));
             }
 
 #ifdef LP_H_DEBUG
-            std::cout << "cN' = " << cN << std::endl;
+            std::cout << "c' = " << cP << std::endl;
 #endif
 
             // Check if optimal
             size_t entering_var = 0;
             Number most_negative = 0;
-            for (size_t i = 0; i < cN.size(); ++i) {
-                if (cN[i] < -Eps) { 
-                    if (cN[i] < most_negative) {
+            for (size_t i = 0; i < cP.size(); ++i) {
+                if (cP[i] < -Eps) { 
+                    if (cP[i] < most_negative) {
                         entering_var = nbv[i];
-                        most_negative = cN[i];
+                        most_negative = cP[i];
                     }
                 }
             }
@@ -1248,6 +1255,9 @@ namespace lp {
             // 1. Convert non-equality constraints to equality with slack variables
             for (size_t r = 0; r < constraints.size(); ++r) {
                 if (constraints[r].type != ConstraintType::Eq) {
+#ifdef LP_H_DEBUG
+                    std::cout << "Adding slack variable x" << variables.size() + num_extra_vars << std::endl;
+#endif
                     transformations.push_back(new transformations::SlackVar(variables.size() + num_extra_vars, r, constraints[r].type));
                     num_extra_vars += 1;
                 }
@@ -1256,30 +1266,56 @@ namespace lp {
             // 2. Variable bounds
             for (size_t c = 0; c < variables.size(); ++c) {
                 if (std::abs(variables[c].max) < Eps) { // Variable is negative
+#ifdef LP_H_DEBUG
+                    std::cout << "Variable x" << c << " is negative, negating." << std::endl;
+#endif
                     transformations.push_back(new transformations::NegateVar(c));
 
                     if (variables[c].min > -Infinity) {
+#ifdef LP_H_DEBUG
+                    std::cout << "Variable x" << c << " is bounded below, adding slack var x" << variables.size() + num_extra_vars << " and constraint c" << constraints.size() + num_extra_constraints << std::endl;
+#endif
                         transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints,
                                     c, variables.size() + num_extra_vars, ConstraintType::LEq, -variables[c].min));            
+                        transformations.push_back(new transformations::NegateRow(constraints.size() + num_extra_constraints));
                         num_extra_constraints += 1;
                         num_extra_vars += 1;
                     }
                 }
                 else if (variables[c].min < -Eps) { // Variable is URS
+#ifdef LP_H_DEBUG
+                    std::cout << "Variable x" << c << " is urs, adding negative x" << variables.size() + num_extra_vars << std::endl;
+#endif
                     transformations.push_back(new transformations::URSVar(c, variables.size() + num_extra_vars));
                     size_t cneg = variables.size() + num_extra_vars;
                     num_extra_vars += 1;
 
                     if (variables[c].min > -Infinity) {
+#ifdef LP_H_DEBUG
+                    std::cout << "Variable x" << c << " is bounded below, adding slack var x" << variables.size() + num_extra_vars << " and constraint c" << constraints.size() + num_extra_constraints << std::endl;
+#endif
                         transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints,
                                     c, variables.size() + num_extra_vars, ConstraintType::GEq, variables[c].min));            
+#ifdef LP_H_DEBUG
+                    std::cout << "Variable x" << cneg << " is bounded below, adding slack var x" << variables.size() + num_extra_vars + 1 << " and constraint c" << constraints.size() + num_extra_constraints + 1 << std::endl;
+#endif
                         transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints + 1,
                                     cneg, variables.size() + num_extra_vars + 1, ConstraintType::GEq, variables[c].min));            
+                        transformations.push_back(new transformations::NegateRow(constraints.size() + num_extra_constraints));
+                        transformations.push_back(new transformations::NegateRow(constraints.size() + num_extra_constraints + 1));
                         num_extra_constraints += 2;
                         num_extra_vars += 2;
                     }
 
                     if (variables[c].max < Infinity) {
+#ifdef LP_H_DEBUG
+                    std::cout << "Variable x" << c << " is bounded above, adding slack var x" << variables.size() + num_extra_vars << " and constraint c" << constraints.size() + num_extra_constraints << std::endl;
+#endif
+                        transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints,
+                                    c, variables.size() + num_extra_vars, ConstraintType::GEq, variables[c].min));            
+#ifdef LP_H_DEBUG
+                    std::cout << "Variable x" << cneg << " is bounded above, adding slack var x" << variables.size() + num_extra_vars + 1 << " and constraint c" << constraints.size() + num_extra_constraints + 1 << std::endl;
+#endif
                         transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints,
                                     c, variables.size() + num_extra_vars, ConstraintType::LEq, variables[c].max));            
                         transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints + 1,
@@ -1290,12 +1326,18 @@ namespace lp {
                 }
                 else { // Variable is positive
                     if (variables[c].max < Infinity) {
+#ifdef LP_H_DEBUG
+                    std::cout << "Variable x" << c << " is bounded above, adding slack var x" << variables.size() + num_extra_vars << " and constraint c" << constraints.size() + num_extra_constraints << std::endl;
+#endif
                         transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints,
                                     c, variables.size() + num_extra_vars, ConstraintType::LEq, variables[c].max));            
                         num_extra_constraints += 1;
                         num_extra_vars += 1;
                     }
                     if (variables[c].min > Eps) {
+#ifdef LP_H_DEBUG
+                    std::cout << "Variable x" << c << " is bounded below, adding slack var x" << variables.size() + num_extra_vars << " and constraint c" << constraints.size() + num_extra_constraints << std::endl;
+#endif
                         transformations.push_back(new transformations::VariableBound(constraints.size() + num_extra_constraints,
                                     c, variables.size() + num_extra_vars, ConstraintType::GEq, variables[c].min));            
                         num_extra_constraints += 1;
@@ -1331,6 +1373,12 @@ namespace lp {
                 if (v.first == 0) { continue; }
                 c[v.second->id] = (type == ProblemType::Max) ? -v.first :  v.first;
             }
+#ifdef LP_H_DEBUG
+            std::cout << "Problem before transformations:" << std::endl;
+            std::cout << "c = " << c << std::endl ;
+            std::cout << "A = " << std::endl << A;
+            std::cout << "b = " << b << std::endl ;
+#endif
 
             // Apply transformations
             for (auto& t : transformations) {
