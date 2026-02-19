@@ -172,7 +172,7 @@ namespace lp {
         static Matrix identity(size_t n) {
             Matrix i(n, n);
             for (size_t k = 0; k < n; ++k) {
-                i(k, k) = 1;
+                i.set(k, k, 1);
             }
             return i;
         }
@@ -186,17 +186,68 @@ namespace lp {
             Matrix aug(a.rows(), a.cols() + b.cols());
             for (size_t c = 0; c < a.cols(); ++c) {
                 for (auto it = a.begin(c); it != a.end(c); ++it) {
-                    aug((*it).row, c) = (*it).value;
+                    aug.set((*it).row, c, (*it).value);
                 }
             }
             
             for (size_t c = 0; c < b.cols(); ++c) {
                 for (auto it = b.begin(c); it != b.end(c); ++it) {
-                    aug((*it).row, c + a.cols()) = (*it).value;
+                    aug.set((*it).row, c + a.cols(), (*it).value);
                 }
             }
 
             return aug;
+        }
+
+        /// Gets the entry at (r,c)
+        Number get(size_t r, size_t c) const {
+            if (r >= rows() || c >= cols()) {
+                throw std::invalid_argument("index out-of-bounds");
+            }
+            
+            size_t col_start = col_index[c];
+            size_t col_end = col_index[c+1];
+            for (size_t i = col_start; i < col_end; ++i) {
+                if (row_index[i] == r) {
+                    return value[i];
+                }
+            }
+            return 0;
+        }
+
+        /// Sets the entry at (r,c); removes the entry if abs(v) < eps
+        void set(size_t r, size_t c, Number v) {
+            if (r >= rows() || c >= cols()) {
+                throw std::invalid_argument("index out-of-bounds");
+            }
+
+            size_t col_start = col_index[c];
+            size_t col_end = col_index[c+1];
+            for (size_t i = col_start; i < col_end; ++i) {
+                if (row_index[i] == r) {
+                    value[i] = v;
+
+                    // Remove the entry
+                    /*if (std::abs(v) < Eps) {
+                        value.erase(value.begin() + i);
+                        row_index.erase(row_index.begin() + i);
+                        for (size_t j = 0; j < col_index.size(); ++j) {
+                            if (col_index[j] >= i) { col_index[j] -= 1; }
+                        }
+                    }*/
+                }
+            }
+
+            if (true) {//(std::abs(v) > Eps) {
+                // Insert new entry
+                size_t new_idx = col_end;
+                value.insert(value.begin() + new_idx, v); 
+                row_index.insert(row_index.begin() + new_idx, r);
+
+                for (size_t i = c+1; i < cols() + 1; ++i) {
+                    col_index[i] += 1;
+                }
+            }
         }
 
         /// Resizes the matrix. Any non-zero entries outside of the new dimensions are dropped.
@@ -354,21 +405,19 @@ namespace lp {
 
         /// Performs basic ERO R1 <- R1 + s*R2
         void add_rows(size_t r1, size_t r2, Number s) {
-            /*std::vector<Number> r2_vals(cols());
-            size_t c = 0;
-            for (size_t i = 0; i < value.size(); ++i) {
-                if (i == col_index[c+1]) { c += 1; }
-                if (row_index[i] == r2) { r2_vals[c] = value[i]; }
+            Vector r1_vals(cols());
+            for (size_t j = 0; j < cols(); ++j) {
+                for (size_t i = col_index[j]; i < col_index[j+1]; ++i) {
+                    if (row_index[i] == r1) {
+                        r1_vals[j] = value[i];
+                    }
+                }
             }
 
-            for (size_t i = 0; i < cols(); ++i) {
-                if (std::abs(r2_vals[i]) < Eps) continue;
-                (*this)(r1, i) += s * r2_vals[i];
-            }*/
             for (size_t j = 0; j < cols(); ++j) {
                 for (size_t i = col_index[j]; i < col_index[j+1]; ++i) {
                     if (row_index[i] == r2) {
-                        (*this)(r1, j) += s * value[i]; 
+                        set(r1, j, r1_vals[j] + s *  value[i]); 
                     }
                 }
             }
@@ -424,43 +473,7 @@ namespace lp {
 
         /// Access the entry at (r,c)
         Number operator()(std::size_t r, std::size_t c) const {
-            if (r >= rows() || c >= cols()) {
-                throw std::invalid_argument("index out-of-bounds");
-            }
-            
-            size_t col_start = col_index[c];
-            size_t col_end = col_index[c+1];
-            for (size_t i = col_start; i < col_end; ++i) {
-                if (row_index[i] == r) {
-                    return value[i];
-                }
-            }
-            return 0;
-        }
-
-        /// Access a reference to entry at (r,c), inserts a 0 if entry does not exist
-        Number& operator()(std::size_t r, std::size_t c) {
-            if (r >= rows() || c >= cols()) {
-                throw std::invalid_argument("index out-of-bounds");
-            }
-
-            size_t col_start = col_index[c];
-            size_t col_end = col_index[c+1];
-            for (size_t i = col_start; i < col_end; ++i) {
-                if (row_index[i] == r) {
-                    return value[i];
-                }
-            }
-
-            // Insert new entry
-            size_t new_idx = col_end;
-            value.insert(value.begin() + new_idx, 0); 
-            row_index.insert(row_index.begin() + new_idx, r);
-
-            for (size_t i = c+1; i < cols() + 1; ++i) {
-                col_index[i] += 1;
-            }
-            return value[new_idx];
+            return get(r,c); 
         }
 
         /// Matrix*Vector multiplication
@@ -505,7 +518,7 @@ namespace lp {
 
             for (size_t c = 0; c < rhs.cols(); ++c) {
                 for (auto it = rhs.begin(c); it != rhs.end(c); ++it) {
-                    (*this)((*it).row, c) += (*it).value;
+                    set((*it).row, c, get((*it).row, c) + (*it).value);
                 }
             }
         }
@@ -522,7 +535,7 @@ namespace lp {
 
             for (size_t c = 0; c < rhs.cols(); ++c) {
                 for (auto it = rhs.begin(c); it != rhs.end(c); ++it) {
-                    (*this)((*it).row, c) -= (*it).value;
+                    set((*it).row, c, get((*it).row, c) - (*it).value);
                 }
             }
         }
@@ -718,7 +731,7 @@ namespace lp {
                 c = Vector(c.size() + A.rows());
                 for (size_t i = 0; i < A.rows(); ++i) {
                     bv.push_back(original_num_cols + i);
-                    A(i, original_num_cols + i) = 1;
+                    A.set(i, original_num_cols + i, 1);
                     c[original_num_cols + i] = 1;
                 }
 
@@ -1119,7 +1132,7 @@ namespace lp {
             NegateVar(size_t id) : Base(false), id(id) {}
             void apply_matrix(Matrix& A) override {
                 for (size_t r = 0; r < A.rows(); ++r) {
-                    A(r, id) *= -1;
+                    A.set(r, id, -1 * A.get(r, id));
                 }
             }
     
@@ -1154,8 +1167,8 @@ namespace lp {
                 constraint_id(constraint_id), var_id(var_id), slack_var(slack_var), type(type), bound(bound) {}
 
             void apply_matrix(Matrix& A) override {
-                A(constraint_id, var_id) = 1;
-                A(constraint_id, slack_var) = type == ConstraintType::LEq ? 1 : -1;
+                A.set(constraint_id, var_id, 1);
+                A.set(constraint_id, slack_var, type == ConstraintType::LEq ? 1 : -1);
             };
 
             void apply_rhs(Vector& b) override {
@@ -1173,7 +1186,7 @@ namespace lp {
         public:
             SlackVar(size_t id, size_t row, ConstraintType type) : Base(true), id(id), row(row), type(type) {}
             void apply_matrix(Matrix& A) override {
-                A(row, id) = type == ConstraintType::LEq ? 1 : -1;
+                A.set(row, id, type == ConstraintType::LEq ? 1 : -1);
             }
         private:
             size_t id;
@@ -1188,7 +1201,7 @@ namespace lp {
                 for (size_t r = 0; r < A.rows(); ++r) {
                     Number v = A(r, vplus);
                     if (std::abs(v) > Eps) {
-                        A(r, vneg) = -v; 
+                        A.set(r, vneg, -v); 
                     }
                 }
             }
@@ -1359,7 +1372,7 @@ namespace lp {
             for (size_t i = 0; i < constraints.size(); ++i) {
                 for (const auto& v : constraints[i].lhs.terms) {
                     if (v.first == 0) { continue; }
-                    A(i, v.second->id) = v.first;
+                    A.set(i, v.second->id, v.first);
                 }
 
                 b[i] = constraints[i].rhs;
