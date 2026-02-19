@@ -686,7 +686,7 @@ namespace lp {
             std::vector<bool> is_identity_cols(A.rows(), false);
 
             // Quickly check if the identity matrix is a submatrix, if so, set those columns as bv
-            if (A.rows() > 1) {
+            /*if (A.rows() > 1) {
                 for (size_t i = 0; i < A.cols(); ++i) {
                     Number nonzero_entry = 0;
                     size_t num_zeros = A.rows();
@@ -704,10 +704,10 @@ namespace lp {
                         identity_cols[nonzero_row] = i;
                     }
                 }
-            }
+            }*/
 
             // Add artificial variables
-            if (std::find(is_identity_cols.begin(), is_identity_cols.end(), false) != is_identity_cols.end()) {
+            if (true) { //(std::find(is_identity_cols.begin(), is_identity_cols.end(), false) != is_identity_cols.end()) {
                 cur_phase = 1;
                 
 #ifdef LP_H_DEBUG
