@@ -787,18 +787,16 @@ namespace lp {
 #endif
 
             // Check if optimal
-            size_t entering_var = 0;
-            Number most_negative = 0;
+            size_t entering_var = std::numeric_limits<size_t>::max();
             for (size_t i = 0; i < cP.size(); ++i) {
                 if (cP[i] < -Eps) { 
-                    if (cP[i] < most_negative) {
+                    if (nbv[i] < entering_var) {
                         entering_var = nbv[i];
-                        most_negative = cP[i];
                     }
                 }
             }
 
-            if (most_negative == 0) {
+            if (entering_var == std::numeric_limits<size_t>::max()) {
                 status = SolutionStatus::kOptimal;
                 return;
             }
