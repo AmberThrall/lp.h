@@ -225,22 +225,26 @@ namespace lp {
             size_t col_end = col_index[c+1];
             for (size_t i = col_start; i < col_end; ++i) {
                 if (row_index[i] == r) {
-                    value[i] = v;
-
                     // Remove the entry
                     if (std::abs(v) < Eps) {
                         value.erase(value.begin() + i);
                         row_index.erase(row_index.begin() + i);
-                        for (size_t j = 0; j < col_index.size(); ++j) {
-                            if (col_index[j] >= i) { col_index[j] -= 1; }
+                        for (size_t j = c+1; j < col_index.size(); ++j) {
+                            col_index[j] -= 1;
                         }
                     }
+                    else { // Update the entry
+                        value[i] = v;
+                    }
+
+                    return;
                 }
             }
 
+            // Insert new entry
             if (std::abs(v) > Eps) {
-                // Insert new entry
-                size_t new_idx = col_end;
+                size_t new_idx = col_start;
+                while (new_idx < col_end && row_index[new_idx] < r) { new_idx++; }
                 value.insert(value.begin() + new_idx, v); 
                 row_index.insert(row_index.begin() + new_idx, r);
 
@@ -423,24 +427,9 @@ namespace lp {
             }
         }
 
-        struct Entry {
-            size_t row;
-            Number& value;
-        };
         struct ConstEntry {
             size_t row;
             const Number& value;
-        };
-
-        class iterator {
-        public:
-            iterator(Matrix* m, size_t idx) : m(m), idx(idx) {}
-            Entry operator*() const { return {  m->row_index[idx], m->value[idx] }; }
-            iterator& operator++() { ++idx; return *this; }
-            bool operator!=(const iterator& other) const { return idx != other.idx; }
-        private:
-            Matrix* m;
-            size_t idx;
         };
 
         class const_iterator {
@@ -454,17 +443,9 @@ namespace lp {
             size_t idx;
         };
 
-        iterator begin(size_t c) { 
-            if (c >= cols()) { throw std::invalid_argument("column out-of-bounds"); }
-            return iterator(this, col_index[c]); 
-        }
         const_iterator begin(size_t c) const { 
             if (c >= cols()) { throw std::invalid_argument("column out-of-bounds"); }
             return const_iterator(this, col_index[c]); 
-        }
-        iterator end(size_t c) { 
-            if (c >= cols()) { throw std::invalid_argument("column out-of-bounds"); }
-            return iterator(this, col_index[c+1]); 
         }
         const_iterator end(size_t c) const { 
             if (c >= cols()) { throw std::invalid_argument("column out-of-bounds"); }
