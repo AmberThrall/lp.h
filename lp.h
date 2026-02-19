@@ -228,17 +228,17 @@ namespace lp {
                     value[i] = v;
 
                     // Remove the entry
-                    /*if (std::abs(v) < Eps) {
+                    if (std::abs(v) < Eps) {
                         value.erase(value.begin() + i);
                         row_index.erase(row_index.begin() + i);
                         for (size_t j = 0; j < col_index.size(); ++j) {
                             if (col_index[j] >= i) { col_index[j] -= 1; }
                         }
-                    }*/
+                    }
                 }
             }
 
-            if (true) {//(std::abs(v) > Eps) {
+            if (std::abs(v) > Eps) {
                 // Insert new entry
                 size_t new_idx = col_end;
                 value.insert(value.begin() + new_idx, v); 
