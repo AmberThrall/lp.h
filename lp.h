@@ -36,6 +36,9 @@
 #ifdef LP_H_DEBUG
 #include <iostream>
 #endif
+#ifdef LP_H_EIGEN
+#include <Eigen/Sparse>
+#endif
 #include <algorithm>
 #include <cstdint>
 #include <vector>
@@ -162,11 +165,15 @@ namespace lp {
         Matrix() : Matrix(0,0) {}
 
         /// Creates a m x n all-zeros matrix 
+#ifdef LP_H_EIGEN
+        Matrix(size_t m, size_t n) : n_rows(m), n_cols(n), em(m, n) {}
+#else
         Matrix(size_t m, size_t n) : n_rows(m), n_cols(n) {
             for (size_t i = 0; i < n+1; ++i) {
                 col_index.push_back(0);
             }
         }
+#endif
 
         /// Returns the n x n identity matrix
         static Matrix identity(size_t n) {
@@ -205,6 +212,14 @@ namespace lp {
                 throw std::invalid_argument("index out-of-bounds");
             }
             
+#ifdef LP_H_EIGEN
+            for (Eigen::SparseMatrix<Number>::InnerIterator it(em, c); it; ++it) {
+                if ((size_t)it.row() == r && (size_t)it.col() == c) {
+                    return it.value();
+                }
+            }
+            return 0;
+#else
             size_t col_start = col_index[c];
             size_t col_end = col_index[c+1];
             for (size_t i = col_start; i < col_end; ++i) {
@@ -213,6 +228,7 @@ namespace lp {
                 }
             }
             return 0;
+#endif
         }
 
         /// Sets the entry at (r,c); removes the entry if abs(v) < eps
@@ -221,6 +237,10 @@ namespace lp {
                 throw std::invalid_argument("index out-of-bounds");
             }
 
+#ifdef LP_H_EIGEN
+            em.coeffRef(r, c) = v;
+            if (std::abs(v) < Eps) { em.prune(Eps); }
+#else
             size_t col_start = col_index[c];
             size_t col_end = col_index[c+1];
             for (size_t i = col_start; i < col_end; ++i) {
@@ -252,10 +272,15 @@ namespace lp {
                     col_index[i] += 1;
                 }
             }
+#endif
         }
 
         /// Resizes the matrix. Any non-zero entries outside of the new dimensions are dropped.
         void resize(size_t r, size_t c) {
+#ifdef LP_H_EIGEN
+            em.makeCompressed();
+            em.conservativeResize(r, c);
+#else
             if (c < cols() || r < rows()) { // remake the matrix
                 std::vector<Number> new_v; 
                 std::vector<size_t> new_cols;
@@ -282,6 +307,7 @@ namespace lp {
             while (col_index.size() < c+1) {
                 col_index.push_back(value.size());
             }
+#endif
         
             n_rows = r;
             n_cols = c;
@@ -301,10 +327,8 @@ namespace lp {
             if (c >= cols()) { throw std::out_of_range("column out-of-bounds."); }
 
             Vector ret(rows());
-            size_t col_start = col_index[c];
-            size_t col_end = col_index[c+1];
-            for (size_t i = col_start; i < col_end; ++i) {
-                ret[row_index[i]] = value[i];
+            for (auto it = begin(c); it != end(c); ++it) {
+                ret[(*it).row] = (*it).value;
             }
             return ret;
         }
@@ -312,6 +336,17 @@ namespace lp {
         /// Returns a submatrix formed by a list of columns
         Matrix submatrix_cols(std::vector<size_t> subcols) const {
             Matrix ret(n_rows, subcols.size());
+#ifdef LP_H_EIGEN
+            std::vector<Eigen::Triplet<Number>> triplets;
+            for (size_t k = 0; k < subcols.size(); ++k) {
+                for (Eigen::SparseMatrix<Number>::InnerIterator it(em, subcols[k]); it; ++it) {
+                    triplets.push_back(Eigen::Triplet<Number>(it.row(), k, it.value()));
+                }   
+            }
+            ret.em.setFromTriplets(triplets.begin(), triplets.end());
+            ret.em.makeCompressed();
+            return ret;
+#else
             ret.col_index.clear();
 
             for (size_t j = 0; j < subcols.size(); ++j) {
@@ -328,128 +363,144 @@ namespace lp {
             ret.col_index.push_back(ret.value.size());
 
             return ret;
-        }
-
-        /// Computes the row-reduced Echelon form
-        void rref() {
-            size_t lead = 0; 
-            for (size_t r = 0; r < rows(); ++r) {
-                if (lead >= cols()) { break; }
-
-                // Find pivot
-                size_t i = r;
-                while (std::abs((*this)(i, lead)) < Eps) {
-                    i += 1;
-                    if (i == rows()) {
-                        i = r;
-                        lead += 1;
-                        if (lead == cols()) { return; }
-                    }
-                }
-
-                // Swap rows i and r
-                swap_rows(i, r);
-
-                // R_r <- R_r / pivot
-                scale_row(r, 1 / (*this)(r, lead));
-
-                // For each row i!=r, R_i <- R_i - R_r * m(i,lead)
-                for (size_t i = 0; i < rows(); ++i) {
-                    if (i == r) { continue; }
-                    add_rows(i, r, -(*this)(i, lead));
-                }
-
-                lead += 1;
-            }
-        }
-
-        Matrix inverse() const {
-            if (!square()) {
-                throw std::runtime_error("cannot take inverse of non-square matrix.");
-            }
-
-            Matrix aug = Matrix::augment((*this), Matrix::identity(rows()));
-            aug.rref();
-
-            // Check that matrix was invertible.
-            for (size_t r = 0; r < rows(); ++r) {
-                for (size_t c = 0; c < cols(); ++c) {
-                    bool pass = true;
-                    if (r == c && std::abs(aug(r,c) - 1) > Eps) { pass = false; }
-                    if (r != c && std::abs(aug(r,c)) > Eps) { pass = false; }
-
-                    if (!pass) {
-                        throw std::runtime_error("cannot take inverse of a singular matrix.");
-                    }
-                }
-            }
-
-            // Get the inverse from aug
-            std::vector<size_t> subcols;
-            for (size_t i = 0; i < rows(); ++i) {
-                subcols.push_back(i + rows());
-            }
-            return aug.submatrix_cols(subcols); 
+#endif
         }
 
         /// Swaps rows r1 and r2
         void swap_rows(size_t r1, size_t r2) {
+#ifdef LP_H_EIGEN
+            std::vector<Eigen::Triplet<Number>> triplets;
+            for (size_t k = 0; k < cols(); ++k) {
+                for (Eigen::SparseMatrix<Number>::InnerIterator it(em, k); it; ++it) {
+                    if ((size_t)it.row() == r1) {
+                        triplets.push_back(Eigen::Triplet<Number>(r2, it.col(), it.value()));
+                    }
+                    else if ((size_t)it.row() == r2) {
+                        triplets.push_back(Eigen::Triplet<Number>(r1, it.col(), it.value()));
+                    }
+                    else {
+                        triplets.push_back(Eigen::Triplet<Number>(it.row(), it.col(), it.value()));
+                    }
+                }   
+            }
+            em.setFromTriplets(triplets.begin(), triplets.end());
+            em.makeCompressed();
+#else
             for (size_t i = 0; i < value.size(); ++i) {
                 if (row_index[i] == r1) { row_index[i] = r2; }
                 else if (row_index[i] == r2) { row_index[i] = r1; }
             }
+#endif
         }
 
         /// Scales a row by `s`
         void scale_row(size_t r, Number s) {
+#ifdef LP_H_EIGEN
+            std::vector<Eigen::Triplet<Number>> triplets;
+            for (size_t k = 0; k < cols(); ++k) {
+                for (Eigen::SparseMatrix<Number>::InnerIterator it(em, k); it; ++it) {
+                    if ((size_t)it.row() == r) {
+                        triplets.push_back(Eigen::Triplet<Number>(it.row(), it.col(), it.value() * s));
+                    }
+                    else {
+                        triplets.push_back(Eigen::Triplet<Number>(it.row(), it.col(), it.value()));
+                    }
+                }   
+            }
+            em.setFromTriplets(triplets.begin(), triplets.end());
+            em.makeCompressed();
+#else
             for (size_t i = 0; i < value.size(); ++i) {
                 if (row_index[i] == r) { value[i] *= s; } 
             }
+#endif
         }
 
         /// Performs basic ERO R1 <- R1 + s*R2
         void add_rows(size_t r1, size_t r2, Number s) {
             Vector r1_vals(cols());
             for (size_t j = 0; j < cols(); ++j) {
-                for (size_t i = col_index[j]; i < col_index[j+1]; ++i) {
-                    if (row_index[i] == r1) {
-                        r1_vals[j] = value[i];
+                for (auto it = begin(j); it != end(j); ++it) {
+                    if ((*it).row == r1) {
+                        r1_vals[j] = (*it).value;
                     }
                 }
             }
 
+            std::vector<size_t> write_cols;
+            std::vector<Number> write_vals;
             for (size_t j = 0; j < cols(); ++j) {
-                for (size_t i = col_index[j]; i < col_index[j+1]; ++i) {
-                    if (row_index[i] == r2) {
-                        set(r1, j, r1_vals[j] + s *  value[i]); 
+                for (auto it = begin(j); it != end(j); ++it) {
+                    if ((*it).row == r2) {
+                        write_cols.push_back(j);
+                        write_vals.push_back(r1_vals[j] + s * (*it).value);
                     }
                 }
+            }
+
+            for (size_t i = 0; i < write_cols.size(); ++i) {
+                set(r1, write_cols[i], write_vals[i]);
             }
         }
 
+#ifdef LP_H_EIGEN
+        /// Returns the underlying Eigen SparseMatrix class as a reference
+        Eigen::SparseMatrix<Number>& eigen() { return em; }
+#endif
+
         struct ConstEntry {
             size_t row;
-            const Number& value;
+            Number value;
         };
 
         class const_iterator {
         public:
+#ifdef LP_H_EIGEN
+            const_iterator(Eigen::SparseMatrix<Number>::InnerIterator idx) : idx(idx) {}
+#else
             const_iterator(const Matrix* m, size_t idx) : m(m), idx(idx) {}
-            ConstEntry operator*() const { return {  m->row_index[idx], m->value[idx] }; }
-            const_iterator& operator++() { ++idx; return *this; }
-            bool operator!=(const const_iterator& other) const { return idx != other.idx; }
+#endif
+
+            ConstEntry operator*() const { 
+#ifdef LP_H_EIGEN
+                return { (size_t)idx.row(), idx.value() };
+#else
+                return {  m->row_index[idx], m->value[idx] }; 
+#endif
+            }
+            const_iterator& operator++() { 
+                ++idx; 
+                return *this; 
+            }
+            bool operator==(const const_iterator& other) const { return idx == other.idx; }
+            bool operator!=(const const_iterator& other) const { return !(*this == other); }
         private:
+#ifdef LP_H_EIGEN
+            Eigen::SparseMatrix<Number>::InnerIterator idx;
+#else
             const Matrix* m;
             size_t idx;
+#endif
         };
 
         const_iterator begin(size_t c) const { 
             if (c >= cols()) { throw std::invalid_argument("column out-of-bounds"); }
+#ifdef LP_H_EIGEN
+            Eigen::SparseMatrix<Number>::InnerIterator it(em, c);
+            return const_iterator(std::move(it)); 
+#else
             return const_iterator(this, col_index[c]); 
+#endif
         }
         const_iterator end(size_t c) const { 
             if (c >= cols()) { throw std::invalid_argument("column out-of-bounds"); }
+#ifdef LP_H_EIGEN
+            Eigen::SparseMatrix<Number>::InnerIterator it(em, c);
+            while (it) { ++it; }
+            return const_iterator(std::move(it)); 
+#else
             return const_iterator(this, col_index[c+1]); 
+#endif
         }
 
         /// Access the entry at (r,c)
@@ -467,8 +518,9 @@ namespace lp {
             for (size_t j = 0; j < cols(); ++j) {
                 Number xj = rhs[j];
                 if (std::abs(xj) < Eps) { continue; }
-                for (size_t k = col_index[j]; k < col_index[j+1]; ++k) {
-                    ret[row_index[k]] += value[k] * xj;
+
+                for (auto it = begin(j); it != end(j); ++it) {
+                    ret[(*it).row] += (*it).value * xj;
                 }
             }
 
@@ -484,8 +536,8 @@ namespace lp {
             Vector ret(rhs.cols());
 
             for (size_t j = 0; j < rhs.cols(); ++j) {
-                for (size_t k = rhs.col_index[j]; k < rhs.col_index[j+1]; ++k) {
-                    ret[j] += rhs.value[k] * lhs[rhs.row_index[k]];
+                for (auto it = rhs.begin(j); it != rhs.end(j); ++it) {
+                    ret[j] += (*it).value * lhs[(*it).row];
                 }
             }
 
@@ -527,9 +579,21 @@ namespace lp {
         }
 
         void operator*=(const Number& rhs) {
+#ifdef LP_H_EIGEN
+            std::vector<Eigen::Triplet<Number>> triplets;
+            for (size_t k = 0; k < cols(); ++k) {
+                for (Eigen::SparseMatrix<Number>::InnerIterator it(em, k); it; ++it) {
+                    triplets.push_back(Eigen::Triplet<Number>(it.row(), it.col(), it.value() * rhs));
+                }   
+            }
+            em.setFromTriplets(triplets.begin(), triplets.end());
+            em.makeCompressed();
+
+#else
             for (size_t i = 0; i < value.size(); ++i) {
                 value[i] *= rhs;
             }
+#endif
         }
 
         friend Matrix operator*(Matrix lhs, const Number& rhs) {
@@ -539,9 +603,13 @@ namespace lp {
         friend Matrix operator*(Number& lhs, Matrix rhs) { return rhs * lhs; }
     private:
         std::size_t n_rows, n_cols;
+#ifdef LP_H_EIGEN
+        Eigen::SparseMatrix<Number> em;
+#else
         std::vector<Number> value;
         std::vector<size_t> col_index;
         std::vector<size_t> row_index;
+#endif
     };
 
     inline Matrix operator*(const Number& lhs, const Matrix& rhs) {

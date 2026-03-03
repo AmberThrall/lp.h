@@ -1,6 +1,7 @@
 #include <iomanip>
 #include <iostream>
 
+#define LP_H_EIGEN
 #include "../lp.h"
 using namespace lp;
 
