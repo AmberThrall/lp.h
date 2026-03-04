@@ -81,6 +81,13 @@ namespace lp {
             return v;
         }
 
+        /// Sets all entries within Eps of zero to zero
+        void prune() {
+            for (size_t i = 0; i < size(); ++i) {
+                if (std::abs(value[i]) < Eps) { value[i] = 0; }
+            }
+        }
+
         /// Resizes the vector
         void resize(size_t new_size) {
             value.resize(new_size);
@@ -270,6 +277,25 @@ namespace lp {
 
                 for (size_t i = c+1; i < cols() + 1; ++i) {
                     col_index[i] += 1;
+                }
+            }
+#endif
+        }
+
+        /// Removes all entries within Eps of zero
+        void prune() {
+#ifdef LP_H_EIGEN
+            em.prune(Eps);
+#else
+            for (size_t c = 0; c < cols(); ++c) {
+                for (size_t i = col_index[c]; i < col_index[c+1]; ++i) {
+                    if (std::abs(value[i]) < Eps) {
+                        value.erase(value.begin() + i);
+                        row_index.erase(row_index.begin() + i);
+                        for (size_t j = c+1; j < col_index.size(); ++j) {
+                            col_index[j] -= 1;
+                        }
+                    }
                 }
             }
 #endif
@@ -924,6 +950,10 @@ namespace lp {
                 if (r == leaving_var) { continue; } 
                 Binv.add_rows(r, leaving_var, dB[r]);
             }
+
+            // Cleanup x and Binv
+            x.prune();
+            Binv.prune();
 
             // Finally update bv and nbv
             size_t leaving_var_actual = bv[leaving_var];
